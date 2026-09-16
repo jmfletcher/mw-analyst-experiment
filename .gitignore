@@ -11,3 +11,7 @@ Second Step/pilot_results/
 Third Step/pilot_opus46/
 Third Step/results_opus46/
 Third Step/results_grok46/
+mw_experiment_raw_results.zip
+*.aux
+*.log
+reports/*conflicted*

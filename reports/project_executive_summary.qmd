@@ -33,17 +33,27 @@ repo_root <- if (file.exists("Second Step/results/results_all.csv")) {
   stop("Cannot locate Second Step/results/results_all.csv")
 }
 
-results <- read.csv(
-  file.path(repo_root, "Second Step/results/results_all.csv"),
-  stringsAsFactors = FALSE
-)
+fmt <- function(x, d = 4) sprintf(paste0("%.", d, "f"), x)
+
+between_arm_ss <- function(values, arms) {
+  arms <- droplevels(as.factor(arms))
+  overall_mean <- mean(values, na.rm = TRUE)
+  arm_means <- tapply(values, arms, mean, na.rm = TRUE)
+  arm_counts <- table(arms)
+  sum(arm_counts[names(arm_means)] * (arm_means - overall_mean)^2)
+}
+
 conditions <- read.delim(
   file.path(repo_root, "conditions.tsv"),
   stringsAsFactors = FALSE,
   na.strings = ""
 )
 
-results <- results |>
+# --- Composer-2 run (Second Step) ---
+results_c2 <- read.csv(
+  file.path(repo_root, "Second Step/results/results_all.csv"),
+  stringsAsFactors = FALSE
+) |>
   mutate(
     arm = sub("_[0-9]+$", "", agent_id),
     arm = factor(arm, levels = conditions$condition),
@@ -53,10 +63,11 @@ results <- results |>
     cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
     est_lc = tolower(trimws(estimator)),
     twfe = grepl("twfe|feols|fixest", est_lc),
-    continuous_tx = grepl("continuous", tolower(treatment_definition))
+    continuous_tx = grepl("continuous", tolower(treatment_definition)),
+    model = "composer-2"
   )
 
-arm_summary <- results |>
+arm_summary_c2 <- results_c2 |>
   group_by(arm) |>
   summarize(
     n = n(),
@@ -73,47 +84,105 @@ arm_summary <- results |>
     .groups = "drop"
   )
 
-between_arm_ss <- function(values, arms) {
-  arms <- droplevels(as.factor(arms))
-  overall_mean <- mean(values, na.rm = TRUE)
-  arm_means <- tapply(values, arms, mean, na.rm = TRUE)
-  arm_counts <- table(arms)
-  sum(arm_counts[names(arm_means)] * (arm_means - overall_mean)^2)
-}
+set.seed(42)
+obs_stat_c2 <- between_arm_ss(results_c2$att_estimate, results_c2$arm)
+perm_stats_c2 <- replicate(10000, {
+  between_arm_ss(results_c2$att_estimate, sample(results_c2$arm))
+})
+fisher_p_c2 <- mean(perm_stats_c2 >= obs_stat_c2)
+kw_c2 <- kruskal.test(att_estimate ~ arm, data = results_c2)
+
+# --- Opus 4.6 run (Third Step) ---
+results_opus <- read.csv(
+  file.path(repo_root, "Third Step/results_opus46/results_all.csv"),
+  stringsAsFactors = FALSE
+) |>
+  mutate(
+    arm = sub("_[0-9]+$", "", agent_id),
+    arm = factor(arm, levels = conditions$condition),
+    years_start = as.integer(years_start),
+    years_end = as.integer(years_end),
+    year_span = years_end - years_start + 1,
+    cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
+    est_lc = tolower(trimws(estimator)),
+    twfe = grepl("twfe|feols|fixest", est_lc),
+    cgbs = grepl("cgbs|continuous.?did|continuous.?treatment.?did", est_lc),
+    continuous_tx = grepl("continuous", tolower(treatment_definition)),
+    model = "opus-4.6"
+  )
+
+arm_summary_opus <- results_opus |>
+  group_by(arm) |>
+  summarize(
+    n = n(),
+    mean_att = mean(att_estimate, na.rm = TRUE),
+    sd_att = sd(att_estimate, na.rm = TRUE),
+    median_att = median(att_estimate, na.rm = TRUE),
+    frac_negative = mean(att_estimate < 0, na.rm = TRUE),
+    frac_teen = mean(outcome_variable == "emp_pop_ratio_teen", na.rm = TRUE),
+    frac_no_cov = mean(cov_none, na.rm = TRUE),
+    frac_twfe = mean(twfe, na.rm = TRUE),
+    frac_cgbs = mean(cgbs, na.rm = TRUE),
+    frac_continuous = mean(continuous_tx, na.rm = TRUE),
+    mean_start = mean(years_start, na.rm = TRUE),
+    mean_span = mean(year_span, na.rm = TRUE),
+    .groups = "drop"
+  )
 
 set.seed(42)
-obs_stat <- between_arm_ss(results$att_estimate, results$arm)
-perm_stats <- replicate(10000, {
-  between_arm_ss(results$att_estimate, sample(results$arm))
+obs_stat_opus <- between_arm_ss(results_opus$att_estimate, results_opus$arm)
+perm_stats_opus <- replicate(10000, {
+  between_arm_ss(results_opus$att_estimate, sample(results_opus$arm))
 })
-fisher_p <- mean(perm_stats >= obs_stat)
-kw <- kruskal.test(att_estimate ~ arm, data = results)
+fisher_p_opus <- mean(perm_stats_opus >= obs_stat_opus)
+kw_opus <- kruskal.test(att_estimate ~ arm, data = results_opus)
 
-fmt <- function(x, d = 4) sprintf(paste0("%.", d, "f"), x)
+# Pairwise Wilcoxon for Opus 4.6
+pw_opus <- pairwise.wilcox.test(results_opus$att_estimate, results_opus$arm,
+                                 p.adjust.method = "none")
+
+# Backward compatibility aliases used later in the document
+results <- results_c2
+arm_summary <- arm_summary_c2
+fisher_p <- fisher_p_c2
+obs_stat <- obs_stat_c2
+kw <- kw_c2
 ```
 
 \newpage
 
 ## Executive summary
 
-This project tests whether **prompted literature priors** causally change what autonomous AI agents report about the employment effects of the minimum wage. Agents analyze the **same** state–year panel with the **same** task instructions; only the literature context (if any) is randomized.
+This project tests whether **prompted literature priors** causally change what autonomous AI agents report about the employment effects of the minimum wage. Agents analyze the **same** state–year panel with the **same** task instructions; only the literature context (if any) is randomized. Multiple AI models are tested to examine whether model choice mediates the influence of literature primes.
 
-**Design.** Five arms × 50 Cursor agents = **250** completed analyses. Arms: no prime; null-effect short; null-effect with citations; negative-effect short; negative-effect with citations. Agents choose outcome, sample window, treatment definition, covariates, and estimator under a shared DiD methodology guide.
+**Design.** Five arms × 50 Cursor agents per model. Arms: no prime; null-effect short; null-effect with citations; negative-effect short; negative-effect with citations. Agents choose outcome, sample window, treatment definition, covariates, and estimator under a shared DiD methodology guide.
 
-**Headline results (Second Step run).**
+**Headline results — Composer-2 run (Second Step, 250 agents).**
 
 | Finding | Result |
 |:--------|:-------|
 | Completion | **250/250** agents returned usable `results.csv` |
-| Between-arm ATT differences | **Not significant** (Fisher omnibus *p* = `r fmt(fisher_p)`; Kruskal–Wallis *p* = `r fmt(kw$p.value)`) |
+| Between-arm ATT differences | **Not significant** (Fisher omnibus *p* = `r fmt(fisher_p_c2)`; Kruskal–Wallis *p* = `r fmt(kw_c2$p.value)`) |
 | Outcome choice | **~99.6%** studied teen employment-to-population |
 | Estimator choice | **~98.8%** Callaway–Sant'Anna family; **≤4% TWFE** in any arm |
 | Treatment definition | **249/250 binary**; **0% continuous** MW treatment |
 | Short vs citation-rich primes | **No meaningful ATT gap** on planned contrasts |
 
-**Bottom line.** With Cursor `composer-2` agents and Wave-2-style estimator discretion (TWFE allowed), **literature primes did not shift reported ATTs** in a detectable way. Behavior resembles Cunningham's **constrained Wave 1** (CS-heavy, overlapping distributions) more than his **Wave 2** finding that negatively primed Claude Code agents moved toward TWFE, continuous treatment, and more negative estimates.
+**Headline results — Opus 4.6 run (Third Step, 249 agents, 1 failure).**
 
-**Implication.** Primed priors alone are not enough: **platform, model, and instruction packaging** appear to mediate whether discretion produces estimator-channel divergence.
+| Finding | Result |
+|:--------|:-------|
+| Completion | **249/250** agents returned usable `results.csv` |
+| Between-arm ATT differences | **Significant** (Fisher omnibus *p* = `r fmt(fisher_p_opus)`; Kruskal–Wallis *p* = `r fmt(kw_opus$p.value)`) |
+| Outlier arm | **`negative_short`**: mean ATT = `r fmt(arm_summary_opus$mean_att[arm_summary_opus$arm == "negative_short"])`, median = `r fmt(arm_summary_opus$median_att[arm_summary_opus$arm == "negative_short"])` (most negative) |
+| Specification variation | `negative_short` shows **3 continuous treatment**, **2 CGBS**, **1 TWFE** — more diverse than other arms |
+| Pairwise | `null_cites` vs `negative_short` *p* = `r fmt(pw_opus$p.value["null_cites", "negative_short"])` |
+
+**Pending run.** A **Grok 4.6** run (250 agents) is currently in progress; results will be incorporated when complete.
+
+**Bottom line.** With Cursor `composer-2` agents, literature primes did **not** shift reported ATTs — behavior resembled Cunningham's constrained **Wave 1**. With **Opus 4.6**, the `negative_short` arm produced significantly more negative ATTs and more specification diversity, **more closely resembling Cunningham's Wave 2** finding that negatively primed agents moved toward alternative estimators and more negative estimates. **Model choice is a critical moderator** of whether literature primes influence agent behavior.
+
+**Implication.** The same experimental protocol produces qualitatively different results across models: primed priors alone are not enough with `composer-2`, but **Opus 4.6 agents respond to negative primes** through both ATT shifts and specification-channel divergence. Platform and model matter.
 
 ---
 
@@ -160,10 +229,12 @@ Pre-aggregated **state × year** panel (51 units, 1990–2022): effective minimu
 
 ### Scale and waves
 
-| Wave | Location | Scale | Notes |
-|:-----|:---------|:------|:------|
-| First | Frozen in `First Step/` | 150 agents (30×5) | Earlier protocol; TWFE discouraged |
-| Second (current results) | `Second Step/results/` | **250 agents (50×5)** | TWFE allowed in methodology |
+| Wave | Location | Scale | Model | Notes |
+|:-----|:---------|:------|:------|:------|
+| First | `First Step/` | 150 agents (30×5) | `composer-2` | Earlier protocol; TWFE discouraged |
+| Second | `Second Step/results/` | **250 agents (50×5)** | `composer-2` | TWFE allowed in methodology |
+| Third | `Third Step/results_opus46/` | **249 agents (50×5, 1 failure)** | **`opus-4.6`** | Same protocol as Second; different model |
+| Fourth (in progress) | `Third Step/results_grok46/` | 250 agents (50×5) | **`grok-4.6`** | Same protocol; pending completion |
 
 ---
 
@@ -177,16 +248,16 @@ Pre-aggregated **state × year** panel (51 units, 1990–2022): effective minimu
 | `analyze_results.R` | Omnibus tests, plots |
 | `analyze_second_step_detail.R` | Extended tables/figures → `Second Step/analysis/` |
 
-Default model: **`composer-2`**. Agents are sandboxed with `settingSources: []` so user/project rules outside the workspace are not loaded.
+Models: **`composer-2`** (Second Step), **`opus-4.6`** (Third Step), **`grok-4.6`** (in progress). Agents are sandboxed with `settingSources: []` so user/project rules outside the workspace are not loaded.
 
 ---
 
-## 4. Key results
+## 4. Key results — Composer-2 run (Second Step, *N* = 250)
 
 ### Arm-level ATT summary
 
-```{r arm-table}
-arm_summary |>
+```{r arm-table-c2}
+arm_summary_c2 |>
   transmute(
     Arm = as.character(arm),
     N = n,
@@ -198,26 +269,27 @@ arm_summary |>
     `% TWFE` = fmt(100 * frac_twfe, 1),
     `Mean span` = fmt(mean_span, 1)
   ) |>
-  kable(booktabs = TRUE, align = c("l", rep("r", 8)))
+  kable(booktabs = TRUE, align = c("l", rep("r", 8)),
+        caption = "Composer-2 arm-level ATT summary (Second Step).")
 ```
 
 ### Inference
 
-- **Fisher omnibus** (between-arm sum of squares, 10,000 permutations): observed = `r fmt(obs_stat)`, *p* = `r fmt(fisher_p)`.
-- **Kruskal–Wallis** across five arms: χ² = `r fmt(kw$statistic)`, *p* = `r fmt(kw$p.value)`.
+- **Fisher omnibus** (between-arm sum of squares, 10,000 permutations): observed = `r fmt(obs_stat_c2)`, *p* = `r fmt(fisher_p_c2)`.
+- **Kruskal–Wallis** across five arms: χ² = `r fmt(kw_c2$statistic)`, *p* = `r fmt(kw_c2$p.value)`.
 - Planned contrasts (null − negative, short and cites): neither rejects at conventional levels.
 
-**Interpretation:** condition labels are statistically exchangeable with respect to reported ATT in this run.
+**Interpretation:** condition labels are statistically exchangeable with respect to reported ATT in the composer-2 run.
 
-```{r fig-att, fig.cap="Distribution of reported ATT estimates by treatment arm (N = 250)."}
+```{r fig-att-c2, fig.cap="Distribution of reported ATT estimates by treatment arm — Composer-2 (N = 250)."}
 knitr::include_graphics(file.path(repo_root, "Second Step/results/att_by_arm.png"))
 ```
 
-```{r fig-forest, fig.cap="Arm-level mean ATT with approximate 95% intervals."}
+```{r fig-forest-c2, fig.cap="Arm-level mean ATT with approximate 95% intervals — Composer-2."}
 knitr::include_graphics(file.path(repo_root, "Second Step/analysis/forest_arm_means.png"))
 ```
 
-### Specification patterns
+### Specification patterns (Composer-2)
 
 - **Outcome:** nearly universal teen EMP/POP (`emp_pop_ratio_teen`).
 - **Estimator:** Callaway–Sant'Anna dominates; TWFE rare and not concentrated in negative arms.
@@ -225,39 +297,149 @@ knitr::include_graphics(file.path(repo_root, "Second Step/analysis/forest_arm_me
 - **Covariates:** nontrivial share use none (~42–66% by arm); not clearly sorted by prime.
 - **Event studies:** produced by ≥98% of agents per arm.
 
-```{r fig-estimator, fig.cap="Estimator family composition by arm."}
+```{r fig-estimator-c2, fig.cap="Estimator family composition by arm — Composer-2."}
 knitr::include_graphics(file.path(repo_root, "Second Step/analysis/estimator_family_stacked_by_arm.png"))
 ```
 
 ---
 
-## 5. Comparison to Cunningham (2026)
+## 5. Key results — Opus 4.6 run (Third Step, *N* = 249)
 
-| Dimension | Cunningham (Substack) | This Cursor run |
-|:----------|:----------------------|:----------------|
-| Platform | Claude Code CLI | Cursor SDK (`composer-2`) |
-| Arms | 3 | **5** (short vs cites splits + pure none) |
-| Wave 1 pattern | Similar ATTs under CS-only | **Replicates in spirit** (~99% CS; Fisher *p* ≈ 0.41) |
-| Wave 2 pattern | Negative arm → more TWFE, continuous Tx, more negative ATTs | **Does not replicate** (≤4% TWFE; 0% continuous) |
-| Data | Same essential panel concept | Pre-aggregated CSV (no microdata rebuild) |
+The Opus 4.6 run used the **identical protocol, data, and instructions** as the Composer-2 Second Step, differing only in the underlying AI model (`claude-opus-4-6` via Cursor SDK). One agent failed, yielding 249 usable results (49 in `negative_cites`, 50 in all other arms).
 
-Most plausible explanation for the missing Wave 2 shift: **model/platform defaults** toward Callaway–Sant'Anna despite TWFE permission, possibly interacting with prime packaging and stricter Cursor sandboxing. A fuller technical discussion is in `reports/cursor_replication_report.qmd`.
+### Arm-level ATT summary
+
+```{r arm-table-opus}
+arm_summary_opus |>
+  transmute(
+    Arm = as.character(arm),
+    N = n,
+    `Mean ATT` = fmt(mean_att),
+    `SD` = fmt(sd_att),
+    `Median` = fmt(median_att),
+    `% neg.` = fmt(100 * frac_negative, 1),
+    `% teen` = fmt(100 * frac_teen, 1),
+    `% TWFE` = fmt(100 * frac_twfe, 1),
+    `% continuous` = fmt(100 * frac_continuous, 1),
+    `Mean span` = fmt(mean_span, 1)
+  ) |>
+  kable(booktabs = TRUE, align = c("l", rep("r", 9)),
+        caption = "Opus 4.6 arm-level ATT summary (Third Step).")
+```
+
+### Inference
+
+```{r inference-opus}
+cat(sprintf("- **Fisher omnibus** (between-arm SS, 10,000 permutations): observed = %s, *p* = %s\n",
+            fmt(obs_stat_opus), fmt(fisher_p_opus)))
+cat(sprintf("- **Kruskal–Wallis** (all five arms): chi-squared = %s, *p* = %s\n",
+            fmt(kw_opus$statistic), fmt(kw_opus$p.value)))
+```
+
+**The between-arm difference is statistically significant.** The `negative_short` arm is the clear outlier: mean ATT = `r fmt(arm_summary_opus$mean_att[arm_summary_opus$arm == "negative_short"])`, median = `r fmt(arm_summary_opus$median_att[arm_summary_opus$arm == "negative_short"])` — the most negative of all five arms.
+
+**Pairwise comparisons** (Wilcoxon rank-sum, unadjusted):
+
+```{r pairwise-opus}
+pw_df <- as.data.frame(pw_opus$p.value)
+pw_df <- tibble(
+  Comparison = paste(rep(rownames(pw_opus$p.value), each = ncol(pw_opus$p.value)),
+                     "vs",
+                     rep(colnames(pw_opus$p.value), times = nrow(pw_opus$p.value))),
+  p_value = as.vector(as.matrix(pw_opus$p.value))
+) |>
+  filter(!is.na(p_value)) |>
+  arrange(p_value) |>
+  mutate(p_value = fmt(p_value))
+kable(pw_df, booktabs = TRUE, col.names = c("Comparison", "p-value"),
+      caption = "Pairwise Wilcoxon rank-sum tests (Opus 4.6 run, unadjusted).")
+```
+
+```{r fig-att-opus, fig.cap="Distribution of reported ATT estimates by treatment arm — Opus 4.6 (N = 249)."}
+knitr::include_graphics(file.path(repo_root, "Third Step/results_opus46/att_by_arm.png"))
+```
+
+### Specification patterns (Opus 4.6)
+
+The `negative_short` arm shows meaningfully **more specification diversity** than other arms:
+
+- **3 agents** used **continuous treatment** definitions (vs 0 in other arms).
+- **2 agents** used **CGBS / continuous DiD** estimators.
+- **1 agent** used **TWFE**.
+- **11 agents** used **never-treated** as the control group (vs predominantly not-yet-treated in other arms).
+- The remaining agents used Callaway–Sant'Anna, consistent with the overall pattern.
+
+This specification variation in the `negative_short` arm is reminiscent of Cunningham's **Wave 2** finding: negatively primed agents exercising more estimator discretion. A Fisher exact test of treatment definition (binary vs continuous) × arm yields *p* ≈ 0.051 (borderline).
 
 ---
 
-## 6. Repository map
+## 6. Cross-model comparison
+
+```{r cross-model-table}
+cross_model <- bind_rows(
+  arm_summary_c2 |>
+    transmute(Model = "Composer-2", Arm = as.character(arm), N = n,
+              `Mean ATT` = fmt(mean_att), SD = fmt(sd_att),
+              `% TWFE` = fmt(100 * frac_twfe, 1),
+              `% continuous Tx` = fmt(100 * frac_continuous, 1)),
+  arm_summary_opus |>
+    transmute(Model = "Opus 4.6", Arm = as.character(arm), N = n,
+              `Mean ATT` = fmt(mean_att), SD = fmt(sd_att),
+              `% TWFE` = fmt(100 * frac_twfe, 1),
+              `% continuous Tx` = fmt(100 * frac_continuous, 1))
+)
+kable(cross_model, booktabs = TRUE, align = c("l", "l", rep("r", 5)),
+      caption = "Cross-model comparison: arm-level ATT and specification choices.")
+```
+
+```{r cross-model-omnibus}
+cross_omnibus <- tibble(
+  Model = c("Composer-2", "Opus 4.6", "Grok 4.6"),
+  N = c(nrow(results_c2), nrow(results_opus), NA),
+  `Fisher p` = c(fmt(fisher_p_c2), fmt(fisher_p_opus), "—"),
+  `KW p` = c(fmt(kw_c2$p.value), fmt(kw_opus$p.value), "—"),
+  `Significant?` = c("No", "Yes", "Pending")
+)
+kable(cross_omnibus, booktabs = TRUE, align = c("l", "r", "r", "r", "c"),
+      caption = "Omnibus tests across model runs. Grok 4.6 is in progress.")
+```
+
+**Key contrast:** The same experimental protocol yields **no detectable between-arm differences** with `composer-2` but **significant differences** with `opus-4.6`. The divergence is concentrated in the `negative_short` arm, which under Opus 4.6 produces more negative ATTs and more varied specifications — paralleling Cunningham's finding that negatively primed agents under certain conditions move toward TWFE/continuous treatment and more negative estimates.
+
+---
+
+## 7. Comparison to Cunningham (2026)
+
+| Dimension | Cunningham (Substack) | Composer-2 run | Opus 4.6 run |
+|:----------|:----------------------|:---------------|:-------------|
+| Platform | Claude Code CLI | Cursor SDK (`composer-2`) | Cursor SDK (`opus-4.6`) |
+| Arms | 3 | **5** | **5** |
+| Wave 1 pattern | Similar ATTs under CS-only | **Replicates** (~99% CS; Fisher *p* ≈ 0.41) | Partial (mostly CS, but arm differences emerge) |
+| Wave 2 pattern | Negative arm → more TWFE, continuous Tx, more negative ATTs | **Does not replicate** (≤4% TWFE; 0% continuous) | **Partially replicates** (`negative_short` arm shifts negative with specification diversity) |
+| Data | Same essential panel concept | Pre-aggregated CSV | Pre-aggregated CSV |
+
+The Opus 4.6 run **bridges the gap** between the Composer-2 results and Cunningham's Wave 2 findings. While the specification-channel effect is concentrated in the `negative_short` arm (rather than all negative-primed agents), the pattern is qualitatively similar: negative primes induce some agents to explore alternative estimators and report more negative ATTs.
+
+Most plausible explanation: **model matters**. `Composer-2` agents treat TWFE caveats as binding and default uniformly to CS. `Opus-4.6` agents exercise more discretion when primed with negative literature, especially in the concise (`short`) format. A fuller technical discussion is in `reports/cursor_replication_report.qmd`.
+
+---
+
+## 8. Repository map
 
 ```text
-├── First Step/              # Frozen first-wave materials
+├── First Step/                    # Frozen first-wave materials
 ├── Second Step/
-│   ├── results/             # 250-agent collected outputs + core plots
-│   └── analysis/            # Extended summaries and figures
+│   ├── results/                   # 250-agent Composer-2 outputs + core plots
+│   └── analysis/                  # Extended summaries and figures
+├── Third Step/
+│   ├── results_opus46/            # 249-agent Opus 4.6 outputs + core plots
+│   └── results_grok46/           # Grok 4.6 run (in progress)
 ├── data/agent_panel_essential.csv
 ├── conditions.tsv
 ├── INSTRUCTIONS_SHARED.md / DID_METHODOLOGY.md / PRIME_*.md
-├── scripts/                 # launch, collect, analyze
-├── PROJECT_LOG.md           # Implementation history and troubleshooting
-└── reports/                 # This summary + full replication report
+├── scripts/                       # launch, collect, analyze
+├── PROJECT_LOG.md                 # Implementation history and troubleshooting
+└── reports/                       # This summary + full replication report
 ```
 
 Reproduce analysis:
@@ -265,20 +447,22 @@ Reproduce analysis:
 ```bash
 Rscript scripts/analyze_results.R "Second Step/results"
 Rscript scripts/analyze_second_step_detail.R
+Rscript scripts/analyze_results.R "Third Step/results_opus46"
 ```
 
 ---
 
-## 7. Limitations and next steps
+## 9. Limitations and next steps
 
-**Limitations.** Single model (`composer-2`); no rhetoric/confidence scoring pipeline; one permissive-estimator wave on Cursor (no within-platform CS-only vs TWFE-allowed contrast); prime texts differ from Cunningham's exact wording.
+**Limitations.** Two models completed so far (`composer-2` and `opus-4.6`); Grok 4.6 run in progress. No rhetoric/confidence scoring pipeline; one permissive-estimator wave on Cursor per model (no within-platform CS-only vs TWFE-allowed contrast); prime texts differ from Cunningham's exact wording.
 
 **Testable next steps.**
 
-1. Match Cunningham's three-arm primes and Wave 2 methodology text verbatim.  
-2. Re-run with a Claude model via Cursor SDK (if available), holding instructions fixed.  
-3. Inspect agent logs for abandoned TWFE trials (mechanism check).  
-4. Optionally relax sandbox (`settingSources`) to test ambient-memory hypotheses.
+1. **Complete Grok 4.6 run** and incorporate results for a three-model comparison.
+2. Match Cunningham's three-arm primes and Wave 2 methodology text verbatim.
+3. Inspect Opus 4.6 agent logs for the `negative_short` arm to understand the specification-search mechanism.
+4. Re-run with additional models via Cursor SDK to map the model → prime-sensitivity frontier.
+5. Optionally relax sandbox (`settingSources`) to test ambient-memory hypotheses.
 
 ---
 

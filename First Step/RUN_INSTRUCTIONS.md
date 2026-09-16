@@ -2,7 +2,7 @@
 
 ## What This Does
 
-Launches **250** autonomous Cursor agents to analyze the effect of minimum wage on employment. The current design has 5 conditions with **50** agents per condition:
+Launches 150 autonomous Cursor agents to analyze the effect of minimum wage on employment. The current design has 5 conditions with 30 agents per condition:
 
 - **None**: No literature priming
 - **Null Short**: Brief prime describing literature finding little to no employment effect
@@ -73,12 +73,11 @@ Or from `scripts/`:
 
 Defaults:
 
-- `N_TOTAL=250`
-- `N_PER_CONDITION=50` (full run script sets both explicitly)
+- `N_TOTAL=150`
+- `N_PER_CONDITION=30` inferred from 150 / 5
 - `CONCURRENCY=10`
 - `LAUNCH_DELAY_MS=5000`
 - `CURSOR_MODEL=composer-2`
-- **`EXPERIMENT_OUTPUT`**: unset if you only run `npm run launch:cursor` by hand (then collect defaults to **`output`**). The **`run_pilot_one_per_condition.sh`** shell sets **`Second Step/pilot_results`**; **`run_full_experiment.sh`** sets **`Second Step/results`**. Override: `EXPERIMENT_OUTPUT="Second Step/my_run" ./scripts/run_full_experiment.sh`
 
 Example pilot:
 
@@ -94,9 +93,9 @@ chmod +x scripts/run_pilot_one_per_condition.sh
 ./scripts/run_pilot_one_per_condition.sh
 ```
 
-### Full run (250 agents = 5 conditions × 50)
+### Full run (150 agents = 5 conditions x 30)
 
-Uses **`N_TOTAL=250`** and **`N_PER_CONDITION=50`** so a leftover **`N_PER_CONDITION=1`** from a pilot in the same terminal cannot shrink the run.
+Uses **`N_TOTAL=150`** and **`N_PER_CONDITION=30`** so a leftover **`N_PER_CONDITION=1`** from a pilot in the same terminal cannot shrink the run.
 
 ```bash
 export CURSOR_API_KEY='crsr_...'
@@ -139,57 +138,36 @@ less /tmp/mw_agent_negative_short_001/agent_log.txt
 
 ## Collect Results
 
-Output goes under **`EXPERIMENT_OUTPUT`** (relative to the repo root or an absolute path). Default if unset is **`output`**.
-
-The **`run_pilot_one_per_condition.sh`** and **`run_full_experiment.sh`** scripts default to folders under **`Second Step/`** (paths contain a space — use quotes in `export`). First-wave *code* remains in **`First Step/`**; second-wave *results* live here:
-
-| Script | Default `EXPERIMENT_OUTPUT` |
-|--------|-----------------------------|
-| Pilot | `Second Step/pilot_results` |
-| Full  | `Second Step/results` |
-
-From the repo root, after a launch in the **same terminal** (so the variable is still set):
-
 ```bash
 ./scripts/collect_results.sh
-Rscript scripts/analyze_results.R
 ```
 
-From a **new** terminal, set the same path you used for the run:
+This produces:
 
-```bash
-export EXPERIMENT_OUTPUT="Second Step/results"   # or "Second Step/pilot_results"
-./scripts/collect_results.sh
-Rscript scripts/analyze_results.R
-# or: Rscript scripts/analyze_results.R "Second Step/results"
-```
-
-This produces (for example with `Second Step/results`):
-
-- `Second Step/results/results_all.csv`
-- `Second Step/results/arm_*/agent_*/results.csv`
-- `Second Step/results/arm_*/agent_*/llms.txt`
-- `Second Step/results/arm_*/agent_*/agent_log.txt`
-
-Plots from the R script are written to the **same** directory.
+- `output/results_all.csv`
+- `output/arm_*/agent_*/results.csv`
+- `output/arm_*/agent_*/llms.txt`
+- `output/arm_*/agent_*/agent_log.txt`
 
 ## Analyze Results
 
-Already covered above: **`analyze_results.R`** reads **`$EXPERIMENT_OUTPUT/results_all.csv`** when the env var is set, or the first CLI argument, or defaults to **`output`**.
+```bash
+Rscript scripts/analyze_results.R
+```
 
-The analysis supports any number of conditions listed in `conditions.tsv`. It reports an omnibus Fisher randomization test across all conditions, planned `Null Short` vs. `Negative Short` and `Null Cites` vs. `Negative Cites` contrasts when present, Kruskal-Wallis and pairwise Wilcoxon tests, and specification-choice summaries.
+The analysis now supports any number of conditions listed in `conditions.tsv`. It reports an omnibus Fisher randomization test across all conditions, planned `Null Short` vs. `Negative Short` and `Null Cites` vs. `Negative Cites` contrasts when present, Kruskal-Wallis and pairwise Wilcoxon tests, and specification-choice summaries.
 
 ## Usage and Time Estimates
 
 These are planning estimates, not guarantees. Actual usage depends on how much each agent explores, how many failed specifications it debugs, and how much R output it feeds back into the model.
 
-For **250** agents on Cursor's metered agent usage, scale the first-wave ranges by roughly **5/3** (e.g. if 150 agents was ~50–100 dollars “likely,” plan roughly **80–170** for similar behavior). These are still not guarantees:
+For 150 agents on Cursor's metered agent usage, a reasonable planning range is:
 
-- **Lean run**: proportionally lower if agents converge quickly
-- **Likely run**: intermediate between first-wave lean and heavy
-- **Heavy/debuggy run**: proportionally higher if many agents iterate through failed models
+- **Lean run**: about 20-40 dollars, if agents converge quickly
+- **Likely run**: about 50-100 dollars
+- **Heavy/debuggy run**: about 150-250 dollars, if many agents iterate through failed models
 
-With the default `CONCURRENCY=10` and `LAUNCH_DELAY_MS=5000`, expect wall time **longer than the old 150-agent run** (often **~4–7 hours** as a planning range). Raising concurrency and lowering launch delay can shorten this if your account and machine tolerate it. A one-agent-per-condition pilot should still finish in **10–30 minutes**.
+With the default `CONCURRENCY=10` and `LAUNCH_DELAY_MS=5000`, expect roughly **2-4 hours**. With `CONCURRENCY=25` and a shorter launch delay, expect roughly **1-3 hours**, subject to account limits and local CPU/R memory pressure. A one-agent-per-condition pilot should finish in **10-30 minutes**.
 
 ## Troubleshooting
 

@@ -1,0 +1,13 @@
+{
+  "name": "mw-analyst-experiment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "launch:cursor": "node scripts/launch_experiment_cursor.mjs",
+    "verify:cursor": "node scripts/verify_cursor_api_key.mjs"
+  },
+  "dependencies": {
+    "@cursor/sdk": "latest"
+  }
+}

@@ -36,20 +36,20 @@ This requires the **strong overlap** condition: 0 < P(D=1|X) < 1.
 
 ---
 
-## 3. Caveats for standard TWFE under staggered adoption
+## 3. Why Not TWFE?
 
-The textbook two-way fixed effects regression:
+The standard two-way fixed effects regression:
 
 Y_{i,t} = θ_t + η_i + β · D_{i,t} + ε_{i,t}
 
-has well-documented limitations when treatment turns on at different times:
+has well-documented problems with staggered adoption:
 
-- It can use **already-treated units** as comparisons, whose outcomes reflect treatment effects.
+- It uses **already-treated units** as comparisons, whose outcomes reflect treatment effects.
 - The coefficient β is a weighted average of group-time ATTs with potentially **negative weights**.
 - β can have the **opposite sign** of the true average treatment effect when effects vary over time.
-- Similar issues arise for **naive** TWFE event-study specifications.
+- These problems extend to TWFE event study specifications.
 
-These points concern **interpretation** and motivate the group-time ATT and related estimators below. They are **not** a blanket prohibition on TWFE; if you use TWFE, document the specification and consider sensitivity (e.g. alternative estimators in **Choice of Estimator**, subsamples, or decomposition tools discussed in the literature).
+**Do not use TWFE for staggered DiD.** Use the Callaway and Sant'Anna (2021) estimator or equivalent modern approaches.
 
 ---
 
@@ -312,10 +312,6 @@ Some estimators (both `did` and `contdid`) may produce output that appears succe
 
 ---
 
-## Choice of Estimator
-
-You may use **Callaway and Sant'Anna (2021)** (`did`), **Borusyak, Jaravel, and Spiess (2024)**-style approaches, **two-way fixed effects (TWFE)**, or another defensible DiD estimator. Name the method accurately in your deliverables and interpret estimates in light of Section 3 if you use standard TWFE under staggered adoption.
-
 ## Key References
 
 - Baker, Callaway, Cunningham, Goodman-Bacon, Sant'Anna (2025). "Difference-in-Differences Designs: A Practitioner's Guide."
@@ -326,4 +322,3 @@ You may use **Callaway and Sant'Anna (2021)** (`did`), **Borusyak, Jaravel, and 
 - Rambachan and Roth (2023). "A More Credible Approach to Parallel Trends." *Review of Economic Studies*.
 - Sant'Anna and Zhao (2020). "Doubly Robust Difference-in-Differences Estimators." *Journal of Econometrics*.
 - Sun and Abraham (2021). "Estimating Dynamic Treatment Effects in Event Studies with Heterogeneous Treatment Effects." *Journal of Econometrics*.
-Borusyak, Kirill, Xavier Jaravel, and Jann Spiess. "Revisiting event-study designs: robust and efficient estimation." Review of Economic Studies 91.6 (2024): 3253-3285.

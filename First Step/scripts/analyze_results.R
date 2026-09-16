@@ -1,36 +1,14 @@
 #!/usr/bin/env Rscript
 # analyze_results.R - Post-experiment analysis of many-analyst results
 #
-# Reads: <out>/results_all.csv (combined from collect_results.sh)
-# Produces: randomization tests, summary statistics, specification analysis, plots in <out>/
+# Reads: output/results_all.csv (combined from collect_results.sh)
+# Produces: randomization tests, summary statistics, specification analysis
 #
-# Usage (from repository root; out_dir defaults to EXPERIMENT_OUTPUT env or "output"):
-#   Rscript scripts/analyze_results.R
-#   Rscript scripts/analyze_results.R "Second Step/results"
-#   EXPERIMENT_OUTPUT="Second Step/results" Rscript scripts/analyze_results.R
+# Usage: Rscript scripts/analyze_results.R
 
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-
-args <- commandArgs(trailingOnly = TRUE)
-out_dir <- Sys.getenv("EXPERIMENT_OUTPUT", unset = "")
-if (length(args) >= 1) {
-  out_dir <- args[[1]]
-}
-if (!nzchar(out_dir)) {
-  out_dir <- "output"
-}
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-results_path <- file.path(out_dir, "results_all.csv")
-if (!file.exists(results_path)) {
-  stop(
-    "Missing ", results_path, ". From the repo root run ./scripts/collect_results.sh ",
-    "with the same EXPERIMENT_OUTPUT you used for the launch scripts, ",
-    "or pass the directory: Rscript scripts/analyze_results.R \"Second Step/results\"",
-    call. = FALSE
-  )
-}
 
 between_arm_ss <- function(values, arms) {
   arms <- droplevels(as.factor(arms))
@@ -70,7 +48,7 @@ run_pair_contrast <- function(results, left_arm, right_arm, left_label, right_la
 # ============================================================================
 # Load data
 # ============================================================================
-results <- read.csv(results_path, stringsAsFactors = FALSE)
+results <- read.csv("output/results_all.csv", stringsAsFactors = FALSE)
 conditions <- read.delim("conditions.tsv", stringsAsFactors = FALSE, na.strings = "")
 condition_levels <- conditions$condition
 
@@ -200,7 +178,7 @@ p1 <- ggplot(results, aes(x = arm, y = att_estimate, fill = arm)) +
   theme_minimal() +
   theme(legend.position = "none")
 
-ggsave(file.path(out_dir, "att_by_arm.png"), p1, width = 8, height = 6, dpi = 300)
+ggsave("output/att_by_arm.png", p1, width = 8, height = 6, dpi = 300)
 
 # Permutation distribution for omnibus statistic
 p2 <- ggplot(data.frame(statistic = perm_stats), aes(x = statistic)) +
@@ -214,7 +192,7 @@ p2 <- ggplot(data.frame(statistic = perm_stats), aes(x = statistic)) +
   ) +
   theme_minimal()
 
-ggsave(file.path(out_dir, "fisher_omnibus_permutation.png"), p2, width = 8, height = 6, dpi = 300)
+ggsave("output/fisher_omnibus_permutation.png", p2, width = 8, height = 6, dpi = 300)
 
 # Specification choices
 p3 <- ggplot(results, aes(x = arm, fill = outcome_variable)) +
@@ -227,7 +205,7 @@ p3 <- ggplot(results, aes(x = arm, fill = outcome_variable)) +
   ) +
   theme_minimal()
 
-ggsave(file.path(out_dir, "outcome_by_arm.png"), p3, width = 10, height = 6, dpi = 300)
+ggsave("output/outcome_by_arm.png", p3, width = 10, height = 6, dpi = 300)
 
-cat(sprintf("\nPlots saved to %s/\n", out_dir))
+cat("\nPlots saved to output/\n")
 cat("Done.\n")

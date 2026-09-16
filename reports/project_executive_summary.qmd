@@ -1,0 +1,296 @@
+---
+title: "Minimum Wage Many-Analyst Experiment"
+subtitle: "Executive Summary and Project Details"
+author: "Jason Fletcher (report); experimental design by Scott Cunningham, Baylor University"
+date: today
+format:
+  pdf:
+    documentclass: article
+    papersize: letter
+    geometry:
+      - margin=1in
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-pos: "H"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+knitr::opts_chunk$set(fig.width = 7.2, fig.height = 4.0, dpi = 300, dev = "png")
+library(dplyr)
+library(knitr)
+library(ggplot2)
+
+repo_root <- if (file.exists("Second Step/results/results_all.csv")) {
+  "."
+} else if (file.exists("../Second Step/results/results_all.csv")) {
+  ".."
+} else {
+  stop("Cannot locate Second Step/results/results_all.csv")
+}
+
+results <- read.csv(
+  file.path(repo_root, "Second Step/results/results_all.csv"),
+  stringsAsFactors = FALSE
+)
+conditions <- read.delim(
+  file.path(repo_root, "conditions.tsv"),
+  stringsAsFactors = FALSE,
+  na.strings = ""
+)
+
+results <- results |>
+  mutate(
+    arm = sub("_[0-9]+$", "", agent_id),
+    arm = factor(arm, levels = conditions$condition),
+    years_start = as.integer(years_start),
+    years_end = as.integer(years_end),
+    year_span = years_end - years_start + 1,
+    cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
+    est_lc = tolower(trimws(estimator)),
+    twfe = grepl("twfe|feols|fixest", est_lc),
+    continuous_tx = grepl("continuous", tolower(treatment_definition))
+  )
+
+arm_summary <- results |>
+  group_by(arm) |>
+  summarize(
+    n = n(),
+    mean_att = mean(att_estimate, na.rm = TRUE),
+    sd_att = sd(att_estimate, na.rm = TRUE),
+    median_att = median(att_estimate, na.rm = TRUE),
+    frac_negative = mean(att_estimate < 0, na.rm = TRUE),
+    frac_teen = mean(outcome_variable == "emp_pop_ratio_teen", na.rm = TRUE),
+    frac_no_cov = mean(cov_none, na.rm = TRUE),
+    frac_twfe = mean(twfe, na.rm = TRUE),
+    frac_continuous = mean(continuous_tx, na.rm = TRUE),
+    mean_start = mean(years_start, na.rm = TRUE),
+    mean_span = mean(year_span, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+between_arm_ss <- function(values, arms) {
+  arms <- droplevels(as.factor(arms))
+  overall_mean <- mean(values, na.rm = TRUE)
+  arm_means <- tapply(values, arms, mean, na.rm = TRUE)
+  arm_counts <- table(arms)
+  sum(arm_counts[names(arm_means)] * (arm_means - overall_mean)^2)
+}
+
+set.seed(42)
+obs_stat <- between_arm_ss(results$att_estimate, results$arm)
+perm_stats <- replicate(10000, {
+  between_arm_ss(results$att_estimate, sample(results$arm))
+})
+fisher_p <- mean(perm_stats >= obs_stat)
+kw <- kruskal.test(att_estimate ~ arm, data = results)
+
+fmt <- function(x, d = 4) sprintf(paste0("%.", d, "f"), x)
+```
+
+\newpage
+
+## Executive summary
+
+This project tests whether **prompted literature priors** causally change what autonomous AI agents report about the employment effects of the minimum wage. Agents analyze the **same** state–year panel with the **same** task instructions; only the literature context (if any) is randomized.
+
+**Design.** Five arms × 50 Cursor agents = **250** completed analyses. Arms: no prime; null-effect short; null-effect with citations; negative-effect short; negative-effect with citations. Agents choose outcome, sample window, treatment definition, covariates, and estimator under a shared DiD methodology guide.
+
+**Headline results (Second Step run).**
+
+| Finding | Result |
+|:--------|:-------|
+| Completion | **250/250** agents returned usable `results.csv` |
+| Between-arm ATT differences | **Not significant** (Fisher omnibus *p* = `r fmt(fisher_p)`; Kruskal–Wallis *p* = `r fmt(kw$p.value)`) |
+| Outcome choice | **~99.6%** studied teen employment-to-population |
+| Estimator choice | **~98.8%** Callaway–Sant'Anna family; **≤4% TWFE** in any arm |
+| Treatment definition | **249/250 binary**; **0% continuous** MW treatment |
+| Short vs citation-rich primes | **No meaningful ATT gap** on planned contrasts |
+
+**Bottom line.** With Cursor `composer-2` agents and Wave-2-style estimator discretion (TWFE allowed), **literature primes did not shift reported ATTs** in a detectable way. Behavior resembles Cunningham's **constrained Wave 1** (CS-heavy, overlapping distributions) more than his **Wave 2** finding that negatively primed Claude Code agents moved toward TWFE, continuous treatment, and more negative estimates.
+
+**Implication.** Primed priors alone are not enough: **platform, model, and instruction packaging** appear to mediate whether discretion produces estimator-channel divergence.
+
+---
+
+## 1. Purpose and motivation
+
+Many-analyst studies show that researchers facing identical data can report different causal estimates through **specification choices**. Borjas & Breznau (2026, *Science Advances*) linked immigration researchers' priors to their estimates. Scott Cunningham's design turns that association into an **experiment** by randomizing the prior via a literature prime while holding data and task fixed ([Substack write-up](https://causalinf.substack.com/p/claude-code-45-ai-agents-and-the)).
+
+This repository is a **Cursor SDK replication / extension** of Cunningham's `mw-analyst-experiment` design (originally Claude Code CLI).
+
+**Research question:** Do literature primes about minimum-wage employment effects causally shift autonomous agents' reported average treatment effects (ATTs)?
+
+---
+
+## 2. Experimental design
+
+### Arms
+
+| Arm ID | Label | Literature file |
+|:-------|:------|:----------------|
+| `none` | None | *(none)* |
+| `null_short` | Null Short | `PRIME_NULL_SHORT.md` |
+| `null_cites` | Null Cites | `PRIME_NULL_CITES.md` |
+| `negative_short` | Negative Short | `PRIME_NEGATIVE_SHORT.md` |
+| `negative_cites` | Negative Cites | `PRIME_NEGATIVE_CITES.md` |
+
+All agents receive: `agent_panel_essential.csv`, `DATA_DICTIONARY.md`, `DID_METHODOLOGY.md`, and `INSTRUCTIONS_SHARED.md`. Primed arms also receive one literature context file.
+
+### What agents decide
+
+- Employment outcome (CPS subgroups, QCEW industries, etc.)
+- Treatment definition (binary staggered vs continuous)
+- Sample years / states
+- Covariates and comparison group
+- Estimator (Callaway–Sant'Anna, continuous DiD, TWFE, etc.)
+
+### Deliverables per agent
+
+1. **`results.csv`** — one row with design choices and ATT / SE / CI  
+2. **`llms.txt`** — structured narrative of the analysis  
+
+### Data
+
+Pre-aggregated **state × year** panel (51 units, 1990–2022): effective minimum wages, CPS employment rates for multiple groups, and selected QCEW industry series.
+
+### Scale and waves
+
+| Wave | Location | Scale | Notes |
+|:-----|:---------|:------|:------|
+| First | Frozen in `First Step/` | 150 agents (30×5) | Earlier protocol; TWFE discouraged |
+| Second (current results) | `Second Step/results/` | **250 agents (50×5)** | TWFE allowed in methodology |
+
+---
+
+## 3. Technical pipeline
+
+| Component | Role |
+|:----------|:-----|
+| `@cursor/sdk` + `launch_experiment_cursor.mjs` | Local agents in isolated temp workspaces |
+| `run_full_experiment.sh` / `run_pilot_one_per_condition.sh` | Full (250) and pilot (5) launchers |
+| `collect_results.sh` | Aggregate outputs → `Second Step/results/` |
+| `analyze_results.R` | Omnibus tests, plots |
+| `analyze_second_step_detail.R` | Extended tables/figures → `Second Step/analysis/` |
+
+Default model: **`composer-2`**. Agents are sandboxed with `settingSources: []` so user/project rules outside the workspace are not loaded.
+
+---
+
+## 4. Key results
+
+### Arm-level ATT summary
+
+```{r arm-table}
+arm_summary |>
+  transmute(
+    Arm = as.character(arm),
+    N = n,
+    `Mean ATT` = fmt(mean_att),
+    `SD` = fmt(sd_att),
+    `Median` = fmt(median_att),
+    `% neg.` = fmt(100 * frac_negative, 1),
+    `% teen` = fmt(100 * frac_teen, 1),
+    `% TWFE` = fmt(100 * frac_twfe, 1),
+    `Mean span` = fmt(mean_span, 1)
+  ) |>
+  kable(booktabs = TRUE, align = c("l", rep("r", 8)))
+```
+
+### Inference
+
+- **Fisher omnibus** (between-arm sum of squares, 10,000 permutations): observed = `r fmt(obs_stat)`, *p* = `r fmt(fisher_p)`.
+- **Kruskal–Wallis** across five arms: χ² = `r fmt(kw$statistic)`, *p* = `r fmt(kw$p.value)`.
+- Planned contrasts (null − negative, short and cites): neither rejects at conventional levels.
+
+**Interpretation:** condition labels are statistically exchangeable with respect to reported ATT in this run.
+
+```{r fig-att, fig.cap="Distribution of reported ATT estimates by treatment arm (N = 250)."}
+knitr::include_graphics(file.path(repo_root, "Second Step/results/att_by_arm.png"))
+```
+
+```{r fig-forest, fig.cap="Arm-level mean ATT with approximate 95% intervals."}
+knitr::include_graphics(file.path(repo_root, "Second Step/analysis/forest_arm_means.png"))
+```
+
+### Specification patterns
+
+- **Outcome:** nearly universal teen EMP/POP (`emp_pop_ratio_teen`).
+- **Estimator:** Callaway–Sant'Anna dominates; TWFE rare and not concentrated in negative arms.
+- **Treatment:** almost entirely binary staggered MW changes.
+- **Covariates:** nontrivial share use none (~42–66% by arm); not clearly sorted by prime.
+- **Event studies:** produced by ≥98% of agents per arm.
+
+```{r fig-estimator, fig.cap="Estimator family composition by arm."}
+knitr::include_graphics(file.path(repo_root, "Second Step/analysis/estimator_family_stacked_by_arm.png"))
+```
+
+---
+
+## 5. Comparison to Cunningham (2026)
+
+| Dimension | Cunningham (Substack) | This Cursor run |
+|:----------|:----------------------|:----------------|
+| Platform | Claude Code CLI | Cursor SDK (`composer-2`) |
+| Arms | 3 | **5** (short vs cites splits + pure none) |
+| Wave 1 pattern | Similar ATTs under CS-only | **Replicates in spirit** (~99% CS; Fisher *p* ≈ 0.41) |
+| Wave 2 pattern | Negative arm → more TWFE, continuous Tx, more negative ATTs | **Does not replicate** (≤4% TWFE; 0% continuous) |
+| Data | Same essential panel concept | Pre-aggregated CSV (no microdata rebuild) |
+
+Most plausible explanation for the missing Wave 2 shift: **model/platform defaults** toward Callaway–Sant'Anna despite TWFE permission, possibly interacting with prime packaging and stricter Cursor sandboxing. A fuller technical discussion is in `reports/cursor_replication_report.qmd`.
+
+---
+
+## 6. Repository map
+
+```text
+├── First Step/              # Frozen first-wave materials
+├── Second Step/
+│   ├── results/             # 250-agent collected outputs + core plots
+│   └── analysis/            # Extended summaries and figures
+├── data/agent_panel_essential.csv
+├── conditions.tsv
+├── INSTRUCTIONS_SHARED.md / DID_METHODOLOGY.md / PRIME_*.md
+├── scripts/                 # launch, collect, analyze
+├── PROJECT_LOG.md           # Implementation history and troubleshooting
+└── reports/                 # This summary + full replication report
+```
+
+Reproduce analysis:
+
+```bash
+Rscript scripts/analyze_results.R "Second Step/results"
+Rscript scripts/analyze_second_step_detail.R
+```
+
+---
+
+## 7. Limitations and next steps
+
+**Limitations.** Single model (`composer-2`); no rhetoric/confidence scoring pipeline; one permissive-estimator wave on Cursor (no within-platform CS-only vs TWFE-allowed contrast); prime texts differ from Cunningham's exact wording.
+
+**Testable next steps.**
+
+1. Match Cunningham's three-arm primes and Wave 2 methodology text verbatim.  
+2. Re-run with a Claude model via Cursor SDK (if available), holding instructions fixed.  
+3. Inspect agent logs for abandoned TWFE trials (mechanism check).  
+4. Optionally relax sandbox (`settingSources`) to test ambient-memory hypotheses.
+
+---
+
+## References
+
+- Cunningham, S. (2026). "Claude Code 45: AI Agents and the Minimum Wage." *Scott's Mixtape Substack*. https://causalinf.substack.com/p/claude-code-45-ai-agents-and-the  
+- Borjas, G. J., & Breznau, N. (2026). Many-analyst study of immigration. *Science Advances*.  
+- Baker, A., Callaway, B., Cunningham, S., Goodman-Bacon, A., & Sant'Anna, P. H. C. (2025). Difference-in-Differences Designs: A Practitioner's Guide.  
+- Sant'Anna, P. H. C. (2025). *My Claude Code Setup*. Emory University. https://psantanna.com/claude-code-my-workflow/
+
+## Acknowledgments
+
+During the preparation of this work the author used Cursor in order to assist in code editing, text edits, and reference management. After using this tool/service, the author reviewed and edited the content as needed and takes full responsibility for its content.
+
+Experimental design and original many-analyst concept: Scott Cunningham, Baylor University.

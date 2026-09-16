@@ -48,7 +48,7 @@ agent_id, outcome_variable, treatment_definition, estimator, control_group, cova
 - `agent_id`: Your assigned agent number (provided at runtime)
 - `outcome_variable`: The dependent variable you chose (e.g., "emp_pop_ratio_teen")
 - `treatment_definition`: "binary" or "continuous"
-- `estimator`: "callaway_santanna" or "cgbs_continuous" or "twfe" (or other clear description of what you ran)
+- `estimator`: "callaway_santanna" or "cgbs_continuous" or other description
 - `control_group`: "notyettreated" or "nevertreated"
 - `covariates`: Comma-separated list of covariates used, or "none"
 - `years_start`, `years_end`: The time range of your analysis

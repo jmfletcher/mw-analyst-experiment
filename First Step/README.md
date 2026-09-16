@@ -4,7 +4,7 @@ An experiment testing whether AI agents' prompted priors about the minimum wage 
 
 ## Design
 
-The current full-run target is **250** autonomous Cursor agents (**50 per condition** × five arms) analyzing the same state-level panel data on minimum wages and employment using difference-in-differences methods. Agents are assigned to five treatment conditions, configured in `conditions.tsv`:
+150 autonomous Cursor agents analyze the same state-level panel data on minimum wages and employment using difference-in-differences methods. Agents are assigned to five treatment conditions, configured in `conditions.tsv`:
 
 - **None**: no literature context
 - **Null Short**: brief null or near-zero employment-effect prime
@@ -24,24 +24,19 @@ Pre-aggregated CPS and QCEW state-level annual panel (51 states, 1990-2022). Inc
 
 ## Running the Experiment
 
-See `RUN_INSTRUCTIONS.md` for setup, usage, and cost/time estimates. **`PROJECT_LOG.md`** summarizes what was built for the first wave; **`First Step/`** is a frozen copy of those materials before second-wave instruction edits.
+See `RUN_INSTRUCTIONS.md` for setup, usage, and cost/time estimates.
 
 ```bash
 npm install
 export CURSOR_API_KEY="cursor_..."
-./scripts/run_pilot_one_per_condition.sh   # optional: 5 agents → `Second Step/pilot_results` by default
-./scripts/run_full_experiment.sh            # 250 agents → `Second Step/results` by default
+./scripts/run_full_experiment.sh
 ./scripts/collect_results.sh
 Rscript scripts/analyze_results.R
-Rscript scripts/analyze_second_step_detail.R   # extended tables & figures → `Second Step/analysis`
 ```
 
 ## Repository Structure
 
 ```text
-├── First Step/                 # Archived first-wave files (see ARCHIVE_NOTE.md)
-├── Second Step/               # Second-wave results (`results/`) + extended analysis (`analysis/`); see ARCHIVE_NOTE.md
-├── PROJECT_LOG.md              # What we did; troubleshooting; second-wave notes
 ├── data/
 │   └── agent_panel_essential.csv
 ├── scripts/
@@ -50,8 +45,7 @@ Rscript scripts/analyze_second_step_detail.R   # extended tables & figures → `
 │   ├── run_full_experiment.sh
 │   ├── launch_experiment.sh
 │   ├── collect_results.sh
-│   ├── analyze_results.R
-│   └── analyze_second_step_detail.R
+│   └── analyze_results.R
 ├── conditions.tsv
 ├── INSTRUCTIONS_SHARED.md
 ├── DATA_DICTIONARY.md

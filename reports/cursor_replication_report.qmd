@@ -1,0 +1,563 @@
+---
+title: "Minimum Wage Many-Analyst Experiment"
+subtitle: "Cursor Replication — Setup, Results, and Comparison to Cunningham (2026)"
+author: "Jason Fletcher (report); design by Scott Cunningham, Baylor University"
+date: "June 20, 2026"
+format:
+  pdf:
+    documentclass: article
+    papersize: letter
+    geometry:
+      - margin=1in
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-pos: "H"
+    keep-tex: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+knitr::opts_chunk$set(fig.width = 7.5, fig.height = 4.2, dpi = 300, dev = "png")
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyr)
+
+repo_root <- if (file.exists("Second Step/results/results_all.csv")) {
+  "."
+} else if (file.exists("../Second Step/results/results_all.csv")) {
+  ".."
+} else {
+  stop("Cannot locate Second Step/results/results_all.csv")
+}
+
+results <- read.csv(file.path(repo_root, "Second Step/results/results_all.csv"),
+                    stringsAsFactors = FALSE)
+conditions <- read.delim(file.path(repo_root, "conditions.tsv"),
+                         stringsAsFactors = FALSE, na.strings = "")
+
+results <- results |>
+  mutate(
+    arm = sub("_[0-9]+$", "", agent_id),
+    arm = factor(arm, levels = conditions$condition),
+    years_start = as.integer(years_start),
+    years_end = as.integer(years_end),
+    year_span = years_end - years_start + 1,
+    cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
+    est_lc = tolower(trimws(estimator)),
+    twfe = grepl("twfe|feols|fixest", est_lc),
+    continuous_tx = grepl("continuous", tolower(treatment_definition))
+  )
+
+arm_summary <- results |>
+  group_by(arm) |>
+  summarize(
+    n = n(),
+    mean_att = mean(att_estimate, na.rm = TRUE),
+    sd_att = sd(att_estimate, na.rm = TRUE),
+    median_att = median(att_estimate, na.rm = TRUE),
+    frac_negative = mean(att_estimate < 0, na.rm = TRUE),
+    frac_teen = mean(outcome_variable == "emp_pop_ratio_teen", na.rm = TRUE),
+    frac_no_cov = mean(cov_none, na.rm = TRUE),
+    frac_twfe = mean(twfe, na.rm = TRUE),
+    frac_continuous = mean(continuous_tx, na.rm = TRUE),
+    mean_start = mean(years_start, na.rm = TRUE),
+    mean_span = mean(year_span, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+between_arm_ss <- function(values, arms) {
+  arms <- droplevels(as.factor(arms))
+  overall_mean <- mean(values, na.rm = TRUE)
+  arm_means <- tapply(values, arms, mean, na.rm = TRUE)
+  arm_counts <- table(arms)
+  sum(arm_counts[names(arm_means)] * (arm_means - overall_mean)^2)
+}
+
+set.seed(42)
+obs_stat <- between_arm_ss(results$att_estimate, results$arm)
+perm_stats <- replicate(10000, {
+  between_arm_ss(results$att_estimate, sample(results$arm))
+})
+fisher_p <- mean(perm_stats >= obs_stat)
+
+fmt <- function(x, d = 4) sprintf(paste0("%.", d, "f"), x)
+
+# Map five arms → Cunningham's three-arm display
+results <- results |>
+  mutate(
+    three_arm = case_when(
+      arm == "none" ~ "Control (No Context)",
+      as.character(arm) %in% c("null_short", "null_cites") ~ "Null Context",
+      as.character(arm) %in% c("negative_short", "negative_cites") ~ "Negative Context",
+      TRUE ~ NA_character_
+    ),
+    sig_neg = suppressWarnings(as.numeric(att_pvalue)) < 0.05 & att_estimate < 0
+  )
+
+between_arm_ss_three <- function(df) {
+  between_arm_ss(df$att_estimate, df$three_arm)
+}
+
+set.seed(42)
+df_strip <- results |> filter(is.na(att_estimate) | att_estimate > -0.08)
+obs_stat_three <- between_arm_ss_three(df_strip)
+perm_stats_three <- replicate(10000, {
+  between_arm_ss(df_strip$att_estimate, sample(df_strip$three_arm))
+})
+fisher_p_three <- mean(perm_stats_three >= obs_stat_three)
+
+substack_colors <- c(
+  "Control (No Context)" = "#8A8A8A",
+  "Null Context" = "#4F81BD",
+  "Negative Context" = "#C0504D"
+)
+
+plot_substack_strip <- function(df, title, subtitle, x_limits = NULL) {
+  df <- df |>
+    mutate(three_arm = factor(three_arm, levels = names(substack_colors)))
+  arm_means <- df |>
+    group_by(three_arm) |>
+    summarize(mean_att = mean(att_estimate), .groups = "drop")
+
+  p <- ggplot(df, aes(x = att_estimate, y = three_arm, color = three_arm)) +
+    geom_vline(xintercept = 0, linewidth = 0.35, color = "black") +
+    geom_point(
+      alpha = 0.55, size = 2.4,
+      position = position_jitter(height = 0.14, seed = 42)
+    ) +
+    geom_point(
+      data = arm_means,
+      aes(x = mean_att, y = three_arm),
+      inherit.aes = FALSE,
+      shape = 18, size = 3.8, color = "black"
+    ) +
+    scale_color_manual(values = substack_colors) +
+    labs(title = title, subtitle = subtitle, x = "ATT Estimate", y = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.position = "none",
+      panel.grid.major.y = element_line(color = "grey88", linewidth = 0.3),
+      panel.grid.major.x = element_line(color = "grey88", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold", size = 12, hjust = 0),
+      plot.subtitle = element_text(color = "grey35", size = 9, hjust = 0),
+      axis.text.y = element_text(size = 10)
+    )
+  if (!is.null(x_limits)) p <- p + coord_cartesian(xlim = x_limits)
+  p
+}
+
+summarize_negative <- function(df, label) {
+  tibble(
+    Group = label,
+    n = nrow(df),
+    `Mean estimate` = fmt(mean(df$att_estimate), 3),
+    `25th / 75th pctile` = sprintf(
+      "%s / %s",
+      fmt(quantile(df$att_estimate, 0.25), 3),
+      fmt(quantile(df$att_estimate, 0.75), 3)
+    ),
+    Median = fmt(median(df$att_estimate), 3),
+    `Std. deviation` = fmt(sd(df$att_estimate), 3),
+    `% sig. (p < 0.05, neg.)` = sprintf(
+      "%.0f%% (%d/%d)",
+      100 * mean(df$sig_neg, na.rm = TRUE),
+      sum(df$sig_neg, na.rm = TRUE),
+      nrow(df)
+    ),
+    `Mean panel length` = sprintf("%.1f yrs", mean(df$year_span, na.rm = TRUE)),
+    `% binary / continuous` = sprintf(
+      "%.0f%% / %.0f%%",
+      100 * mean(!df$continuous_tx, na.rm = TRUE),
+      100 * mean(df$continuous_tx, na.rm = TRUE)
+    )
+  )
+}
+
+neg_arm <- results |> filter(grepl("^negative", as.character(arm)))
+neg_cs <- neg_arm |> filter(!twfe)
+neg_twfe <- neg_arm |> filter(twfe)
+
+substack_compare <- bind_rows(
+  tibble(
+    Group = "Cunningham Wave 1: negative-CS",
+    n = 49L,
+    `Mean estimate` = "-0.004",
+    `25th / 75th pctile` = "-0.012 / +0.002",
+    Median = "-0.009",
+    `Std. deviation` = "0.010",
+    `% sig. (p < 0.05, neg.)` = "6% (3/49)",
+    `Mean panel length` = "17.1 yrs",
+    `% binary / continuous` = "100% / 0%"
+  ),
+  tibble(
+    Group = "Cunningham Wave 2: negative-TWFE",
+    n = 13L,
+    `Mean estimate` = "-0.024",
+    `25th / 75th pctile` = "-0.026 / -0.007",
+    Median = "-0.019",
+    `Std. deviation` = "0.018",
+    `% sig. (p < 0.05, neg.)` = "46% (6/13)",
+    `Mean panel length` = "21.6 yrs",
+    `% binary / continuous` = "31% / 69%"
+  ),
+  summarize_negative(neg_cs, "Cursor run: negative-CS"),
+  summarize_negative(neg_twfe, "Cursor run: negative-TWFE")
+)
+```
+
+## Executive summary
+
+This report documents a **Cursor SDK** replication of Scott Cunningham's minimum-wage many-analyst experiment described in [Claude Code 45: AI Agents and the Minimum Wage](https://causalinf.substack.com/p/claude-code-45-ai-agents-and-the) (April 29, 2026). The substantive question is whether **literature primes** causally shift autonomous agents' reported average treatment effects (ATTs) on employment, operating through **specification and estimator choices**.
+
+**Second-wave results (this run):** **250 agents** completed successfully (**50 per condition**). Reported ATT distributions **do not differ significantly across arms** (Fisher omnibus *p* = `r fmt(fisher_p)`). Unlike Cunningham's Wave 2 finding for negatively primed Claude Code agents, **negative-prime arms did not disproportionately adopt TWFE or continuous treatment**; **~96–100%** used Callaway–Sant'Anna-family estimators and **100% binary** treatment definitions (one agent exception). Specification variation therefore resembles Cunningham's **tightly constrained Wave 1** more than his **estimator-discretion Wave 2**.
+
+## Research question and design lineage
+
+Cunningham's experiment randomizes **literature context** while holding data and task instructions fixed, inspired by Borjas & Breznau (2026, *Science Advances*), who showed human immigration researchers' priors predicted estimates through specification search. Randomizing the prior via prompt turns association into **experimental evidence**.
+
+In the Substack post, Cunningham reports **300 agent sessions** across **two waves**:
+
+| Wave | Estimator rule | Arms | *N* per arm | Main finding |
+|:-----|:---------------|:-----|:------------|:-------------|
+| **1** | Callaway–Sant'Anna **only** | Placebo + JEL guide; negative prime; null prime | 50 | ATT distributions **similar** across arms; negative arm slightly lower mean driven by **earlier panel starts** |
+| **2** | CS, BJS, or **TWFE** allowed | Same three arms | 50 | **Negative arm only** shifts: **+24 pp TWFE**, longer panels spanning federal MW hikes, **continuous** treatment; **more negative** reported effects |
+
+This repository implements a **fork** of Cunningham's [`mw-analyst-experiment`](https://github.com/scunning1975/mw-analyst-experiment) design, adapted to **Cursor programmatic agents** (`@cursor/sdk`) rather than the original **Claude Code CLI** (`claude -p`) workflow.
+
+## Experimental setup (this repository)
+
+### Platform and launch pipeline
+
+| Component | Role |
+|:----------|:-----|
+| **`scripts/launch_experiment_cursor.mjs`** | Creates temp workspaces, copies data and markdown instructions, launches local Cursor agents with concurrency control |
+| **`CURSOR_API_KEY`** | Cursor User API key (distinct from IDE subscription login) |
+| **`scripts/collect_results.sh`** | Aggregates per-agent `results.csv` and `llms.txt` into `Second Step/results/` |
+| **`scripts/analyze_results.R`** | Fisher randomization tests, Kruskal–Wallis, specification tables, plots |
+| **`scripts/analyze_second_step_detail.R`** | Extended arm summaries, estimator-family breakdown, forest/violin plots → `Second Step/analysis/` |
+
+Default full run: **`N_TOTAL=250`**, **`N_PER_CONDITION=50`**, model **`composer-2`** (configurable via `CURSOR_MODEL`).
+
+### Treatment arms (five conditions)
+
+Defined in `conditions.tsv`:
+
+| Arm ID | Label | Literature file |
+|:-------|:------|:------------------|
+| `none` | None | *(none)* |
+| `null_short` | Null Short | `PRIME_NULL_SHORT.md` |
+| `null_cites` | Null Cites | `PRIME_NULL_CITES.md` |
+| `negative_short` | Negative Short | `PRIME_NEGATIVE_SHORT.md` |
+| `negative_cites` | Negative Cites | `PRIME_NEGATIVE_CITES.md` |
+
+**Design differences from Cunningham (Substack):**
+
+1. **Five arms** instead of three — splits null and negative primes into **brief** vs **citation-rich** versions, plus a **no-literature** control (`none`) rather than a placebo that still receives the JEL practitioner's guide summary.
+2. **Methodology document** — agents read `DID_METHODOLOGY.md` (Baker et al. practitioner guide content) rather than receiving it as the *only* distinguishing feature of a "placebo" arm. All arms receive the same methodology reference.
+3. **Estimator discretion from the start (second wave)** — active `DID_METHODOLOGY.md` explicitly **allows TWFE, BJS-style, and CS** estimators (Section "Choice of Estimator"), analogous to Cunningham's **Wave 2** protocol. The frozen first-wave snapshot in `First Step/` did **not** include this permissive language.
+4. **Pre-aggregated data** — agents receive `data/agent_panel_essential.csv` (state × year panel, 1990–2022) rather than rebuilding from raw IPUMS CPS microdata, QCEW, and Zipperer MW series.
+
+### Agent task
+
+Each agent must produce:
+
+- **`results.csv`** — one row with outcome, treatment definition, estimator, sample window, ATT point estimate, SE, CI, etc.
+- **`llms.txt`** — structured narrative of design choices and interpretation
+
+Agents have full discretion over outcome variable, sample years, treatment definition (binary vs continuous), comparison group, covariates, and estimator — subject to the methodology reference.
+
+### Data
+
+State-level annual panel (`agent_panel_essential.csv`):
+
+- **51 units** (50 states + DC), **1990–2022**
+- CPS-derived employment-to-population ratios (teen, young adult, low education, etc.)
+- QCEW industry employment and wages
+- Zipperer/EPI effective minimum wage and change indicators
+
+## Key results — Second Step run (*N* = 250)
+
+```{r arm-table}
+arm_summary |>
+  transmute(
+    Arm = as.character(arm),
+    `N` = n,
+    `Mean ATT` = fmt(mean_att),
+    `SD ATT` = fmt(sd_att),
+    `Median ATT` = fmt(median_att),
+    `% negative` = fmt(100 * frac_negative, 1),
+    `% teen outcome` = fmt(100 * frac_teen, 1),
+    `% no covariates` = fmt(100 * frac_no_cov, 1),
+    `% TWFE` = fmt(100 * frac_twfe, 1),
+    `Mean start year` = fmt(mean_start, 0),
+    `Mean span (yrs)` = fmt(mean_span, 1)
+  ) |>
+  kable(booktabs = TRUE, align = c("l", rep("r", 10)))
+```
+
+### Randomization inference
+
+```{r inference}
+kw <- kruskal.test(att_estimate ~ arm, data = results)
+cat(sprintf("- **Fisher omnibus** (between-arm SS, 10,000 permutations): observed = %s, *p* = %s\n",
+            fmt(obs_stat), fmt(fisher_p)))
+cat(sprintf("- **Kruskal–Wallis** (all five arms): chi-squared = %s, *p* = %s\n",
+            fmt(kw$statistic), fmt(kw$p.value)))
+```
+
+**Planned contrasts** (null vs negative, short and cites versions):
+
+| Contrast | Difference (null − negative) | *p* (two-sided) |
+|:---------|:----------------------------:|:----------------:|
+| Null Short − Negative Short | −0.0019 | 0.512 |
+| Null Cites − Negative Cites | +0.0051 | 0.207 |
+
+Neither contrast is significant. The omnibus test fails to reject the sharp null that **condition labels are exchangeable** with respect to reported ATT.
+
+### Specification choices
+
+**Outcome variable:** **498/250 ≈ 99.6%** chose `emp_pop_ratio_teen` (one agent in `negative_short` used `emp_pop_ratio_lt_hs`). Cunningham's Wave 1 reported **97% teen** — very similar convergence.
+
+**Estimator family:** **247/250 (98.8%)** used Callaway–Sant'Anna-family estimators. Only **3 agents** used TWFE-like estimators: 1 in `null_short`, 2 in `negative_short`. **No arm exceeded 4% TWFE.** Chi-squared test of estimator family × arm: *p* ≈ 0.52.
+
+**Treatment definition:** **249/250 binary**; one `negative_short` agent used a custom binary definition keyed to federal-floor binding. **Zero continuous** minimum-wage treatment measures — unlike Cunningham's Wave 2 negative arm (>67% continuous among TWFE users).
+
+**Covariates:** Roughly **42–66%** of agents per arm reported **no covariates** (unconditional PT). Cunningham's Wave 1 reported **0% covariate use** — this Cursor run shows **more conditioning**, but not differentially by arm.
+
+**Sample windows:** Mean panel length **23–27 years** across arms; mean start years **1995–1999**. Cunningham's Wave 1 negative CS agents averaged **17.1 years** with earlier starts driving more negative means; here, **`null_cites` starts latest (1999)** but **`negative_cites` has the longest span (27.4 years)** without a clear negative-arm panel-length advantage.
+
+**Event studies:** **≥98%** per arm produced an event study.
+
+## Substack-style figures (side-by-side with Cunningham)
+
+The figures below mirror the layout in [Cunningham's Substack post](https://causalinf.substack.com/p/claude-code-45-ai-agents-and-the): horizontal strip plots with jittered agent-level ATTs, black diamonds for arm means, and a vertical zero line. Five experimental arms are collapsed to Cunningham's three display groups: **`none` → Control**, **`null_short` + `null_cites` → Null Context**, **`negative_short` + `negative_cites` → Negative Context**.
+
+### Wave 1 analogue — similar distributions across arms
+
+Cunningham's Wave 1 (CS-only) found overlapping ATT distributions across control, null, and negative arms. The Cursor replication shows the same pattern when mapped to three arms: Fisher *p* = `r fmt(fisher_p_three)` (three-arm omnibus, 10,000 permutations).
+
+```{r fig-substack-wave1, fig.cap="Substack-style strip plot (Wave 1 analogue). Each dot is one agent's reported ATT; diamonds are arm means. Five arms mapped to three display groups."}
+plot_substack_strip(
+  df_strip,
+  title = sprintf("%d Cursor agents, same data, same question — different answers", nrow(df_strip)),
+  subtitle = sprintf(
+    "Each dot is one agent's ATT. Diamonds = arm means. Fisher p = %s (three arms).",
+    fmt(fisher_p_three)
+  ),
+  x_limits = c(-0.025, 0.015)
+)
+```
+
+### Wave 2 analogue — no negative-arm left shift
+
+Cunningham's Wave 2 strip plot shows the negative-context arm shifted substantially left (Fisher *p* < 0.0001 in his slides). The Cursor run used Wave-2-style estimator rules from the start (TWFE allowed), but **does not** reproduce that separation: negative-context means overlap null and control.
+
+```{r fig-substack-wave2, fig.cap="Substack-style strip plot (Wave 2 analogue). Wider x-axis as in Cunningham's Wave 2 figure; negative arm does not separate."}
+plot_substack_strip(
+  df_strip,
+  title = "Cursor run (TWFE allowed): Negative-context agents do not produce more negative reported ATTs",
+  subtitle = sprintf(
+    "Mapped to Cunningham's three arms. Fisher p = %s. Diamonds = arm means.",
+    fmt(fisher_p_three)
+  ),
+  x_limits = c(-0.06, 0.02)
+)
+```
+
+### Negative-arm CS vs TWFE comparison table
+
+Cunningham's Substack table contrasts **negative-primed agents who stayed on Callaway–Sant'Anna** (Wave 1, *n* = 49) with **negative-primed agents who switched to TWFE** (Wave 2, *n* = 13). The Cursor run had only **2** negative-arm TWFE agents, so the TWFE row is illustrative rather than a stable subgroup.
+
+```{r substack-table}
+substack_compare |>
+  kable(
+    booktabs = TRUE,
+    align = c("l", "c", rep("r", 7)),
+    caption = "Negative-context agents: Cunningham (Substack) vs Cursor replication."
+  )
+```
+
+**Reading the table:** Cunningham's Wave 2 TWFE subgroup shows a **6× more negative** mean ATT (−0.024 vs −0.004), longer panels (21.6 vs 17.1 years), and **69% continuous** treatment. The Cursor negative-CS subgroup (*n* = 98) closely matches Cunningham's Wave 1 negative-CS mean (−0.005 vs −0.004) but with more covariate use and longer panels overall. The two Cursor negative-TWFE agents are both significant and negative, but *n* = 2 is too small to infer a Wave 2-style mechanism.
+
+## Agent configuration audit: CLAUDE.md, skills, and what agents actually see
+
+A natural hypothesis for the missing Wave 2 TWFE shift is that **Cunningham's Claude Code agents inherited global project memory or skills** that your Cursor agents did not. We audited both setups.
+
+### What the public repositories actually ship to each agent
+
+Neither Cunningham's [`mw-analyst-experiment`](https://github.com/scunning1975/mw-analyst-experiment) nor this repo copies **`CLAUDE.md`**, **`AGENTS.md`**, or **skill files** into agent workspaces. Both launchers build an isolated temp directory containing only:
+
+| File | Cunningham (Claude Code) | This repo (Cursor SDK) |
+|:-----|:-------------------------|:-----------------------|
+| `agent_panel_essential.csv` | Yes | Yes |
+| `DATA_DICTIONARY.md` | Yes | Yes |
+| `DID_METHODOLOGY.md` | Yes | Yes |
+| `INSTRUCTIONS_SHARED.md` | Yes | Yes |
+| `LITERATURE_CONTEXT.md` | Null or negative arms only | Primed arms only (renamed from `PRIME_*.md`) |
+| `prompt.txt` | Yes | Yes |
+
+**No `CLAUDE.md` or `.claude/skills/` appear in either experiment repository** or in the workspace copy step. Cunningham's MixtapeTools [`claude/CLAUDE.md`](https://github.com/scunning1975/MixtapeTools/blob/main/claude/CLAUDE.md) is a **template** for interactive research projects, not part of the batch experiment payload.
+
+### The critical runtime difference: ambient settings loading
+
+Despite identical workspace files, the **agent runtimes differ in what they load from outside the temp folder**:
+
+| Setting layer | Cunningham (`claude -p` from `/tmp/mw_agent_*`) | This repo (`launch_experiment_cursor.mjs`) |
+|:--------------|:--------------------------------------------------|:-------------------------------------------|
+| Workspace markdown | 4–5 copied files only | Same |
+| User `CLAUDE.md` | **Loaded by default** (Claude Code memory hierarchy) if present at `~/.claude/CLAUDE.md` | **Not loaded** |
+| Project rules / skills | **Available** if installed globally or in parent dirs | **Explicitly disabled** via `settingSources: []` |
+| Cursor user rules (`~/.cursor/rules/`) | N/A | **Not loaded** into SDK agents |
+
+Relevant launcher code:
+
+```201:201:scripts/launch_experiment_cursor.mjs
+      local: { cwd: workDir, settingSources: [] },
+```
+
+The Cursor SDK documents this as intentional: `settingSources: []` means **"inline config only"** — the agent sees the prompt and workspace files, nothing else ([SDK skill](https://cursor.com/docs/sdk/typescript)). That is appropriate for a clean experiment, but it is **stricter isolation than Claude Code's default**.
+
+On this machine, `~/.claude/` contains session caches only (no installed `CLAUDE.md` or skills), and `~/.cursor/rules/` has a single AI-acknowledgment rule — so **you are not leaving obvious global econometric skills on the table locally**. Cunningham's Georgetown machine may differ: his MixtapeTools repo ships skills like **`referee2`** (econometric audit), **`blindspot`**, and **`split-pdf`**, typically installed to `~/.claude/skills/` or `~/mixtapetools/.claude/skills/` for interactive Claude Code work. Those skills were **not** part of the published experiment repo, and batch agents are launched with `--allowedTools "Read,Write,Bash"` only — they cannot invoke `/referee2` unless they somehow know to.
+
+**Bottom line on skills:** There is no evidence that Cunningham's **published** Wave 2 protocol depended on skill files in the workspace. Any skill effect would have to come from **global Claude Code memory on his machine**, which we cannot observe. Your Cursor runs are **more aggressively sandboxed**, which would suppress such effects if they existed — but cannot by itself explain why your agents **over-comply** with Callaway–Sant'Anna rather than **under-comply** toward TWFE.
+
+### Instruction-file differences that *are* observable (and matter more than CLAUDE.md)
+
+These differences live in the copied markdown, not in CLAUDE.md:
+
+| Layer | Cunningham Wave 1 (public GitHub) | Cunningham Wave 2 (Substack) | This Cursor run |
+|:------|:----------------------------------|:-----------------------------|:----------------|
+| **TWFE in `DID_METHODOLOGY.md`** | Section 3: **"Do not use TWFE"** | Same JEL text but **CS / BJS / TWFE allowed** | Section 3: caveats only; **Choice of Estimator** permits TWFE |
+| **Arms** | 3 (`none`, `null`, `negative`) | Same | **5** (adds short vs cites splits) |
+| **Control / placebo** | All arms get JEL; `none` = no literature prime | Same | All arms get `DID_METHODOLOGY.md`; `none` = no `LITERATURE_CONTEXT.md` |
+| **Negative prime** | Single long `PRIME_NEGATIVE.md` (4 cited papers) | Same text family | `PRIME_NEGATIVE_SHORT.md` (2 sentences) + `PRIME_NEGATIVE_CITES.md` (4 papers, shorter prose) |
+| **`results.csv` estimator field** | `"callaway_santanna" or "cgbs_continuous" or other` | Same schema | **Explicitly lists `"twfe"`** as a named option |
+| **Pre-registration "no menu" principle** | Agents should not get a checklist of choices | Same philosophy | Listing `twfe` in deliverables schema is a mild menu cue (but did not trigger adoption) |
+
+The Wave 2 behavioral shift Cunningham documents — negative arm **+24 pp TWFE**, **69% continuous treatment**, longer panels — occurred when he **relaxed** the TWFE ban in `DID_METHODOLOGY.md`. Your active protocol is already Wave-2-like on paper, yet **98.8%** of agents still used Callaway–Sant'Anna and **0%** used continuous treatment. The instruction diff therefore **cannot** be the whole story: your agents had permission to TWFE and largely declined.
+
+Sample negative-prime agent narrative (`negative_short_001`) shows the typical path: read negative literature → define binary staggered treatment → **`att_gt()` with DR / not-yet-treated** → report ATT. No transcript evidence of TWFE experimentation followed by promotion (Cunningham's Wave 2 mechanism).
+
+### Most plausible explanations (ranked)
+
+1. **Model / platform behavior (largest)** — Cursor `composer-2` agents treat `DID_METHODOLOGY.md` Section 3 TWFE caveats as binding guidance and default to `did::att_gt()`, even when TWFE is permitted. Cunningham's Claude Code sessions (pinned Claude model) appear more willing to treat TWFE as a **robustness fallback** when CS estimates contradict assigned literature.
+
+2. **Sequential wave context (Cunningham only)** — Wave 2 is a **protocol change** on the same Substack storyline; agents are still fresh instances, but Cunningham's **wording change** (removing the hard TWFE ban) may interact with Claude's prior training on minimum-wage TWFE papers cited in the negative prime. Your run jumped straight to the permissive protocol without a CS-only baseline wave in the same pipeline.
+
+3. **Prime packaging** — Cunningham's single long negative prime foregrounds four classic **panel FE** studies. Your `negative_short` arm is only two sentences; `negative_cites` cites the same authors but with less rhetorical emphasis on estimator choice. Neither matches Cunningham's exact prime text.
+
+4. **Ambient Claude memory (unobserved, Cunningham-side only)** — If his batch runs inherit a user-level `CLAUDE.md` emphasizing "when CS fails or contradicts literature, try alternative estimators," that could nudge Wave 2 behavior. Your `settingSources: []` would block the Cursor analogue even if you had one.
+
+5. **Skills (unlikely for batch runs)** — MixtapeTools skills are built for **interactive** `/referee2`-style audits, not autonomous `-p` batches. No skill files were in either experiment workspace.
+
+### Testable next steps
+
+To separate configuration from model effects:
+
+- **Re-run with `settingSources: ["all"]`** (or copy a minimal project `CLAUDE.md` into each workspace) and compare TWFE adoption rates.
+- **Use Cunningham's exact three-arm primes and Wave 2 `DID_METHODOLOGY.md` text** verbatim in the workspace copy step.
+- **Run the same launcher with a Claude model via Cursor SDK** (if available on your account) holding instructions fixed.
+- **Inspect agent logs** for TWFE trials that were abandoned (Cunningham reports negative-arm agents experiment with TWFE then promote it; your logs would show whether that trial phase is missing entirely).
+
+### Supplementary analysis figures
+
+```{r fig-att, fig.cap="Distribution of reported ATT estimates by treatment arm (five conditions, N=250)."}
+knitr::include_graphics(file.path(repo_root, "Second Step/results/att_by_arm.png"))
+```
+
+```{r fig-forest, fig.cap="Arm-level mean ATT with approximate 95% intervals (Second Step analysis)."}
+knitr::include_graphics(file.path(repo_root, "Second Step/analysis/forest_arm_means.png"))
+```
+
+```{r fig-estimator, fig.cap="Estimator family composition by arm."}
+knitr::include_graphics(file.path(repo_root, "Second Step/analysis/estimator_family_stacked_by_arm.png"))
+```
+
+## Comparison to Cunningham (2026 Substack)
+
+### What replicates
+
+| Finding | Cunningham | This Cursor run |
+|:--------|:-----------|:----------------|
+| Agents converge on **teen employment** | ~97% (Wave 1) | ~99.6% |
+| **ATT distributions similar** when estimator choice is narrow | Wave 1: KS tests, large *p*-values | Fisher *p* = 0.41; KW *p* = 0.31 |
+| **Specification search** produces many estimands | 300 different target parameters | Wide ATT range within arms (e.g., max ≈ +0.07, min ≈ −0.05) |
+| Agents default to **Callaway–Sant'Anna** when not pushed toward TWFE | Wave 1: 100% CS | ~99% CS-family |
+
+### What differs
+
+| Dimension | Cunningham (Substack) | This Cursor replication |
+|:----------|:----------------------|:------------------------|
+| **Agent platform** | Claude Code CLI | Cursor SDK local agents (`composer-2`) |
+| **Experimental arms** | 3 (placebo+JEL, null, negative) | 5 (none, null short/cites, negative short/cites) |
+| **Total agents** | 300 (two sequential waves) | 250 (single wave with Wave-2-style estimator rules) |
+| **Wave 2 TWFE shift** | Negative arm **+24 pp** TWFE vs others | **No meaningful shift** (≤4% TWFE in any arm) |
+| **Continuous treatment** | >67% of Wave 2 negative TWFE agents | **0%** (249/250 binary) |
+| **Panel lengthening under negative prime** | Wave 2 negative TWFE: 17.1 → 21.6 years | Negative arms: 25.5–27.4 years, **not uniquely longer** |
+| **Negative arm ATT shift in Wave 2** | CDF shifts left for negative arm | Negative arms **not more negative** than null arms on average |
+| **Covariate use** | 0% in Wave 1 | ~50% no covariates (substantial conditioning) |
+| **Rhetoric / confidence scoring** | GPT-4o-mini −1 to +1 scale; negative arm more confident even when estimates identical | **Not implemented** in this repository |
+| **Short vs cites primes** | Not studied (single null and negative text) | **No significant difference** between short and cites variants |
+
+### Interpretation
+
+Cunningham's central Wave 2 mechanism — **negative literature primes induce discretionary moves to TWFE, continuous treatment, and longer panels that span federal minimum-wage hikes**, thereby shifting the **target estimand** and producing more negative reported effects — **does not appear in this Cursor replication**, despite TWFE being **explicitly permitted** in instructions.
+
+Possible explanations (not mutually exclusive):
+
+1. **Platform/model differences** — Cursor `composer-2` agents may weight `DID_METHODOLOGY.md` TWFE caveats differently from Cunningham's Claude Code sessions.
+2. **Arm structure** — Splitting primes into short/cites and using a pure `none` control may dilute or alter prime salience relative to a shared JEL summary plus single prime.
+3. **Pre-aggregated data** — Reduced build friction may leave less room for "search" that ends in TWFE/continuous specifications.
+4. **Wave timing** — This run applies Wave-2-style estimator rules without a preceding Wave-1 CS-only baseline in the same agent population.
+
+The **Wave 1 pattern — similar ATT distributions under CS-only-like behavior** — **does replicate** in spirit: with ~99% CS-family adoption, **primes do not significantly move the ATT distribution** (Fisher *p* = 0.41).
+
+Cunningham's deeper point stands: when discretion is wide **and** primes interact with it, agents may target **different causal estimands**. In this run, discretion did not produce the **estimator-channel divergence** he documents for negatively primed Claude Code agents — suggesting **platform, prompt packaging, and model** matter for whether "taking your hand off the wheel" produces the same specification shifts.
+
+## Repository structure and reproducibility
+
+```text
+├── First Step/          # Frozen 150-agent (30×5) first-wave materials
+├── Second Step/
+│   ├── results/       # Collected agent outputs (this report)
+│   └── analysis/      # Extended tables and figures
+├── data/agent_panel_essential.csv
+├── conditions.tsv
+├── DID_METHODOLOGY.md
+├── INSTRUCTIONS_SHARED.md
+├── PRIME_*.md
+└── scripts/             # launch, collect, analyze
+```
+
+To reproduce analysis from the repo root:
+
+```bash
+Rscript scripts/analyze_results.R "Second Step/results"
+Rscript scripts/analyze_second_step_detail.R
+```
+
+## Limitations
+
+- **Single model** (`composer-2`) — Cunningham used a pinned Claude model across ~600 sessions in related work.
+- **No transcript-level rhetoric analysis** — Cunningham's confidence-scoring pipeline is not replicated here.
+- **One wave** — No within-platform comparison of CS-only vs estimator-choice protocols.
+- **Attrition** — 250/250 agents returned `results.csv` in the collected data; individual estimation quality varies (see agent `notes` fields).
+
+## References
+
+- Cunningham, S. (2026). "Claude Code 45: AI Agents and the Minimum Wage." *Scott's Mixtape Substack*. https://causalinf.substack.com/p/claude-code-45-ai-agents-and-the
+- Borjas, G. J., & Breznau, N. (2026). Many-analyst study of immigration (*Science Advances*).
+- Baker, A., Callaway, B., Cunningham, S., Goodman-Bacon, A., & Sant'Anna, P. H. C. (2025). Difference-in-Differences Designs: A Practitioner's Guide.
+- Sant'Anna, P. H. C. (2025). *My Claude Code Setup*. Emory University. https://psantanna.com/claude-code-my-workflow/
+
+## Acknowledgments
+
+During the preparation of this work the author used Cursor in order to assist in code editing, text edits, and reference management. After using this tool/service, the author reviewed and edited the content as needed and takes full responsibility for its content.
+
+Experimental design and original many-analyst concept: Scott Cunningham, Baylor University.

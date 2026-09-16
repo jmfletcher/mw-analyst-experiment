@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # collect_results.sh — Gather results from all agent runs
 #
-# Copies each agent's results.csv, llms.txt, and log into OUTPUT_DIR/arm_*/agent_NNN/
+# Copies each agent's results.csv, llms.txt, and log into output/arm_*/agent_NNN/
 #
-# Output directory: EXPERIMENT_OUTPUT (relative to repo root or absolute), default "output".
-# Pilot/full runners often set this to Second Step/results (see run_*.sh).
+# Also produces a combined results_all.csv with all agents' one-row results.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPERIMENT_DIR="$(dirname "$SCRIPT_DIR")"
-REL_OUT="${EXPERIMENT_OUTPUT:-output}"
-if [[ "$REL_OUT" == /* ]]; then
-	OUTPUT_DIR="$REL_OUT"
-else
-	OUTPUT_DIR="$EXPERIMENT_DIR/$REL_OUT"
-fi
+OUTPUT_DIR="$EXPERIMENT_DIR/output"
 CONDITIONS_FILE="$EXPERIMENT_DIR/conditions.tsv"
 
 if [[ ! -f "$CONDITIONS_FILE" ]]; then
@@ -51,8 +45,7 @@ paths_joined=""
 for ((j = 0; j < ${#BASES[@]}; j++)); do
     paths_joined="${paths_joined:+$paths_joined }${BASES[j]}"
 done
-echo "Collecting results -> $OUTPUT_DIR"
-echo "(search paths: $paths_joined)"
+echo "Collecting results (search paths: $paths_joined)..."
 echo ""
 
 COMBINED_CSV="$OUTPUT_DIR/results_all.csv"

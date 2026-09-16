@@ -1,0 +1,13 @@
+node_modules/
+.env
+output/
+.DS_Store
+Rplots.pdf
+
+# Large experiment drops (keep ARCHIVE_NOTE.md etc. in git)
+Second Step/results/
+Second Step/analysis/
+Second Step/pilot_results/
+Third Step/pilot_opus46/
+Third Step/results_opus46/
+Third Step/results_grok46/

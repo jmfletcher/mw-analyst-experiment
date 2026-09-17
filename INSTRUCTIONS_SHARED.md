@@ -27,11 +27,12 @@ The dataset contains:
 ## Methodology
 
 Read `DID_METHODOLOGY.md` carefully. It covers:
-- The Callaway and Sant'Anna (2021) estimator for binary staggered treatment (`did` R package)
-- The Callaway, Goodman-Bacon, and Sant'Anna continuous treatment framework (`contdid` R package)
-- Identification assumptions, comparison group choices, covariate selection, aggregation, and event studies
+- Identification assumptions for difference-in-differences under staggered adoption
+- Comparison group choices, covariate selection, aggregation, and event studies
+- Caveats for standard TWFE and alternatives
+- Continuous treatment extensions
 
-Both the `did` and `contdid` R packages are pre-installed and available for use, along with `ggplot2`, `dplyr`, and `tidyr`.
+Standard R packages for DiD estimation are pre-installed and available for use, along with `ggplot2`, `dplyr`, `tidyr`, and `fixest`.
 
 ## Deliverables
 
@@ -48,7 +49,7 @@ agent_id, outcome_variable, treatment_definition, estimator, control_group, cova
 - `agent_id`: Your assigned agent number (provided at runtime)
 - `outcome_variable`: The dependent variable you chose (e.g., "emp_pop_ratio_teen")
 - `treatment_definition`: "binary" or "continuous"
-- `estimator`: "callaway_santanna" or "cgbs_continuous" or "twfe" (or other clear description of what you ran)
+- `estimator`: A clear description of the estimator you used (e.g., "callaway_santanna", "twfe", "cgbs_continuous", "bjs_imputation", or other)
 - `control_group`: "notyettreated" or "nevertreated"
 - `covariates`: Comma-separated list of covariates used, or "none"
 - `years_start`, `years_end`: The time range of your analysis
@@ -101,7 +102,7 @@ You are a researcher, not a technician. Think carefully about your choices befor
 - **Explore the data first.** Read `DATA_DICTIONARY.md` carefully before writing any code. Understand what variables are available and what they measure.
 - **Justify your decisions.** Why this outcome variable and not another? Why this sample period? Why this treatment definition? Every choice should have a reason grounded in economic logic, data quality, or methodological considerations. Document your reasoning in the llms.txt.
 - **Be thorough.** Check your results. Examine the event study. Look at pre-trends. Consider whether your findings are robust or fragile. A good empirical analysis anticipates objections.
-- **Do not give up if your first specification fails.** Estimation errors are common in DiD — they usually mean your treatment definition, sample, or comparison group needs adjustment. If `att_gt()` or `cont_did()` throws an error or produces degenerate results (all-zero ATTs, NA standard errors), diagnose the problem and try a different approach. Common fixes include: narrowing the sample period, changing the treatment definition, switching between never-treated and not-yet-treated comparison groups, dropping small treatment cohorts, or trying the continuous treatment framework instead of binary (or vice versa). Iterate until you have valid, non-degenerate estimates. A failed estimation is not an acceptable final result unless you have genuinely exhausted all reasonable alternatives and documented each attempt.
+- **Do not give up if your first specification fails.** Estimation errors are common in DiD — they usually mean your treatment definition, sample, or comparison group needs adjustment. Diagnose the problem and try a different approach. Common fixes include: narrowing the sample period, changing the treatment definition, switching between never-treated and not-yet-treated comparison groups, dropping small treatment cohorts, trying a different estimator, or trying the continuous treatment framework instead of binary (or vice versa). Iterate until you have valid, non-degenerate estimates. A failed estimation is not an acceptable final result unless you have genuinely exhausted all reasonable alternatives and documented each attempt.
 - **If after multiple attempts you still cannot produce valid estimates**, report your best attempt honestly, explain what went wrong, and describe what you tried in both deliverables.
 
 ## Technical Notes

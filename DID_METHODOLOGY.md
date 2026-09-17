@@ -74,10 +74,8 @@ Three choices for the comparison group, each requiring a different PT assumption
 | Comparison group | Assumption | Pros | Cons |
 |---|---|---|---|
 | **Never-treated only** | PT-GT-Nev | Avoids compositional changes; doesn't restrict pre-trends | May be too different from treated; fewer observations |
-| **Not-yet-treated** (recommended) | PT-GT-NYT | More data, better precision; doesn't restrict pre-trends | Comparison group changes over time |
+| **Not-yet-treated** | PT-GT-NYT | More data, better precision; doesn't restrict pre-trends | Comparison group changes over time |
 | **All groups, all periods** | PT-GT-all | Most precise; uses all available data | Imposes parallel pre-trends (strongest assumption) |
-
-**Recommendation:** Use not-yet-treated comparison groups (PT-GT-NYT) as the default. This is the Callaway and Sant'Anna (2021) approach.
 
 ---
 
@@ -95,7 +93,7 @@ Three choices for the comparison group, each requiring a different PT assumption
 
 **Inverse Probability Weighting (IPW):** Model the probability of treatment given covariates, re-weight comparison units to match the treated group's covariate distribution.
 
-**Doubly Robust (DR) — RECOMMENDED:** Combines RA and IPW. Consistent if *either* model is correctly specified. Use `est_method = "dr"` in the `did` package.
+**Doubly Robust (DR):** Combines RA and IPW. Consistent if *either* model is correctly specified. Generally preferred when feasible.
 
 ### Propensity score warnings
 - IPW and DR become noisy when propensity scores are near 1 among comparison units.
@@ -133,67 +131,9 @@ Group-time ATTs can be aggregated in several ways:
 
 ---
 
-## 9. The `did` R Package
-
-### Basic syntax
-
-```r
-library(did)
-
-# Estimate group-time ATTs
-result <- att_gt(
-  yname = "outcome_variable",        # outcome
-  tname = "time_variable",           # time period
-  idname = "unit_id",                # unit identifier
-  gname = "treatment_timing",        # period of first treatment (0 or Inf for never-treated)
-  xformla = ~ covariate1 + covariate2,  # covariates (baseline values)
-  data = your_data,
-  est_method = "dr",                 # doubly robust (recommended)
-  control_group = "notyettreated",   # not-yet-treated comparison (recommended)
-  base_period = "varying"            # use g-1 as baseline for each group
-)
-
-# Aggregate to simple ATT
-agg_simple <- aggte(result, type = "simple")
-
-# Aggregate to event study
-agg_es <- aggte(result, type = "dynamic")
-
-# Plot event study
-ggdid(agg_es)
-```
-
-### Key options
-- `est_method`: `"dr"` (doubly robust, recommended), `"ipw"`, or `"reg"` (regression adjustment)
-- `control_group`: `"notyettreated"` (recommended) or `"nevertreated"`
-- `base_period`: `"varying"` (use g-1 for each group, recommended) or `"universal"` (use a single base period)
-- `xformla`: formula for covariates. Use baseline (pre-treatment) values only.
-- `bstrap`: `TRUE` for bootstrap inference (default). Produces uniform confidence bands.
-- `cband`: `TRUE` for simultaneous confidence bands (default).
-
-### Output
-- `att_gt` returns group-time ATT estimates with standard errors
-- `aggte` aggregates: `type = "simple"` for overall ATT, `type = "dynamic"` for event study, `type = "group"` for group-specific ATTs
-- `ggdid` plots the event study with confidence bands
-
 ---
 
-## 10. Practical Checklist
-
-1. **Define your treatment timing variable.** Each unit needs a treatment start period (or 0/Inf for never-treated).
-2. **Check covariate balance** between treated and comparison groups using normalized differences.
-3. **Choose comparison group.** Default: not-yet-treated.
-4. **Choose estimation method.** Default: doubly robust (`est_method = "dr"`).
-5. **Select covariates.** Use baseline values that predict outcome trends and differ between groups. Avoid post-treatment variables.
-6. **Standardize covariates** if they are on very different scales. This prevents numerical instability in the propensity score model.
-7. **Estimate group-time ATTs** using `att_gt()`.
-8. **Examine the event study** using `aggte(type = "dynamic")`. Check pre-trends. Use uniform confidence bands.
-9. **Report the simple ATT** using `aggte(type = "simple")`.
-10. **Conduct sensitivity analysis** for plausible parallel trends violations.
-
----
-
-## 11. Continuous Treatment: The CGBS Framework
+## 9. Continuous Treatment: The CGBS Framework
 
 When treatment is not binary but **continuous** (a dose), the Callaway, Goodman-Bacon, and Sant'Anna (CGBS) framework extends DiD to estimate dose-response relationships.
 
@@ -301,7 +241,7 @@ est_spline <- feols(I(Delta_Y - trend) ~ bs(dose),
 
 ---
 
-## 12. Important: Verifying Results
+## 10. Important: Verifying Results
 
 Some estimators (both `did` and `contdid`) may produce output that appears successful but contains degenerate estimates — for example, ATT estimates of exactly zero with NA standard errors, or convergence warnings buried in output. **Always verify your results manually:**
 

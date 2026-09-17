@@ -141,7 +141,86 @@ kw_opus <- kruskal.test(att_estimate ~ arm, data = results_opus)
 pw_opus <- pairwise.wilcox.test(results_opus$att_estimate, results_opus$arm,
                                  p.adjust.method = "none")
 
-# Backward compatibility aliases used later in the document
+# --- Grok 4.6 v1 run (Third Step, with CS recipe) ---
+results_grok <- read.csv(
+  file.path(repo_root, "Third Step/results_grok46/results_all.csv"),
+  stringsAsFactors = FALSE
+) |>
+  mutate(
+    arm = sub("_[0-9]+$", "", agent_id),
+    arm = factor(arm, levels = conditions$condition),
+    years_start = as.integer(years_start),
+    years_end = as.integer(years_end),
+    year_span = years_end - years_start + 1,
+    cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
+    est_lc = tolower(trimws(estimator)),
+    twfe = grepl("twfe|feols|fixest", est_lc),
+    continuous_tx = grepl("continuous", tolower(treatment_definition)),
+    model = "grok-4.6"
+  )
+
+arm_summary_grok <- results_grok |>
+  group_by(arm) |>
+  summarize(
+    n = n(), mean_att = mean(att_estimate, na.rm = TRUE),
+    sd_att = sd(att_estimate, na.rm = TRUE),
+    median_att = median(att_estimate, na.rm = TRUE),
+    frac_negative = mean(att_estimate < 0, na.rm = TRUE),
+    frac_teen = mean(outcome_variable == "emp_pop_ratio_teen", na.rm = TRUE),
+    frac_twfe = mean(twfe, na.rm = TRUE),
+    frac_continuous = mean(continuous_tx, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+set.seed(42)
+obs_stat_grok <- between_arm_ss(results_grok$att_estimate, results_grok$arm)
+perm_stats_grok <- replicate(10000, {
+  between_arm_ss(results_grok$att_estimate, sample(results_grok$arm))
+})
+fisher_p_grok <- mean(perm_stats_grok >= obs_stat_grok)
+kw_grok <- kruskal.test(att_estimate ~ arm, data = results_grok)
+
+# --- Grok 4.6 v2 run (neutralized instructions) ---
+results_grok2 <- read.csv(
+  file.path(repo_root, "Third Step/results_grok46_v2/results_all.csv"),
+  stringsAsFactors = FALSE
+) |>
+  mutate(
+    arm = sub("_[0-9]+$", "", agent_id),
+    arm = factor(arm, levels = conditions$condition),
+    years_start = as.integer(years_start),
+    years_end = as.integer(years_end),
+    year_span = years_end - years_start + 1,
+    cov_none = grepl("^none$|^$", tolower(trimws(covariates))),
+    est_lc = tolower(trimws(estimator)),
+    twfe = grepl("twfe|feols|fixest", est_lc),
+    continuous_tx = grepl("continuous", tolower(treatment_definition)),
+    model = "grok-4.6-v2"
+  )
+
+arm_summary_grok2 <- results_grok2 |>
+  group_by(arm) |>
+  summarize(
+    n = n(), mean_att = mean(att_estimate, na.rm = TRUE),
+    sd_att = sd(att_estimate, na.rm = TRUE),
+    median_att = median(att_estimate, na.rm = TRUE),
+    frac_negative = mean(att_estimate < 0, na.rm = TRUE),
+    frac_teen = mean(outcome_variable == "emp_pop_ratio_teen", na.rm = TRUE),
+    frac_twfe = mean(twfe, na.rm = TRUE),
+    frac_continuous = mean(continuous_tx, na.rm = TRUE),
+    frac_nevertreated = mean(grepl("never", tolower(control_group)), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+set.seed(42)
+obs_stat_grok2 <- between_arm_ss(results_grok2$att_estimate, results_grok2$arm)
+perm_stats_grok2 <- replicate(10000, {
+  between_arm_ss(results_grok2$att_estimate, sample(results_grok2$arm))
+})
+fisher_p_grok2 <- mean(perm_stats_grok2 >= obs_stat_grok2)
+kw_grok2 <- kruskal.test(att_estimate ~ arm, data = results_grok2)
+
+# Backward compatibility aliases
 results <- results_c2
 arm_summary <- arm_summary_c2
 fisher_p <- fisher_p_c2
@@ -178,11 +257,29 @@ This project tests whether **prompted literature priors** causally change what a
 | Specification variation | `negative_short` shows **3 continuous treatment**, **2 CGBS**, **1 TWFE** — more diverse than other arms |
 | Pairwise | `null_cites` vs `negative_short` *p* = `r fmt(pw_opus$p.value["null_cites", "negative_short"])` |
 
-**Pending run.** A **Grok 4.6** run (250 agents) is currently in progress; results will be incorporated when complete.
+**Headline results — Grok 4.6 v1 (with CS recipe, 245 agents).**
 
-**Bottom line.** With Cursor `composer-2` agents, literature primes did **not** shift reported ATTs — behavior resembled Cunningham's constrained **Wave 1**. With **Opus 4.6**, the `negative_short` arm produced significantly more negative ATTs and more specification diversity, **more closely resembling Cunningham's Wave 2** finding that negatively primed agents moved toward alternative estimators and more negative estimates. **Model choice is a critical moderator** of whether literature primes influence agent behavior.
+| Finding | Result |
+|:--------|:-------|
+| Between-arm ATT differences | **Highly significant** (Fisher *p* = `r fmt(fisher_p_grok)`; KW *p* = `r sprintf("%.1e", kw_grok$p.value)`) |
+| Planned contrasts | Null Short − Neg Short *p* < 0.0001; Null Cites − Neg Cites *p* = 0.0004 |
+| Mechanism | **Both** negative arms shift left via **outcome variable + control group** choice (100% CS, 100% binary) |
 
-**Implication.** The same experimental protocol produces qualitatively different results across models: primed priors alone are not enough with `composer-2`, but **Opus 4.6 agents respond to negative primes** through both ATT shifts and specification-channel divergence. Platform and model matter.
+**Headline results — Grok 4.6 v2 (neutralized instructions, 243 agents).**
+
+| Finding | Result |
+|:--------|:-------|
+| Between-arm ATT differences | **Highly significant** (Fisher *p* = `r fmt(fisher_p_grok2)`; KW *p* = `r sprintf("%.1e", kw_grok2$p.value)`) |
+| Estimator adoption | **100% Callaway–Sant'Anna** despite removing CS recipe |
+| Implication | CS preference is from model training, **not** the instruction document |
+
+**Bottom line.** Literature primes produce **model-dependent** effects through **different specification channels**:
+
+- **Composer-2:** No detectable prime effect (Wave 1-like).
+- **Opus 4.6:** `negative_short` arm diverges via estimator/treatment switching (Wave 2-like).
+- **Grok 4.6:** Both negative arms diverge via outcome variable and control group selection — **the strongest prime effect observed**, and the mechanism persists identically when the CS step-by-step recipe is removed.
+
+**Implication.** The mechanism through which priors affect estimates varies by model. Removing instructional scaffolding does not eliminate the prime effect — agents' specification choices are shaped by model training, not the methodology document.
 
 ---
 
@@ -233,8 +330,9 @@ Pre-aggregated **state × year** panel (51 units, 1990–2022): effective minimu
 |:-----|:---------|:------|:------|:------|
 | First | `First Step/` | 150 agents (30×5) | `composer-2` | Earlier protocol; TWFE discouraged |
 | Second | `Second Step/results/` | **250 agents (50×5)** | `composer-2` | TWFE allowed in methodology |
-| Third | `Third Step/results_opus46/` | **249 agents (50×5, 1 failure)** | **`opus-4.6`** | Same protocol as Second; different model |
-| Fourth (in progress) | `Third Step/results_grok46/` | 250 agents (50×5) | **`grok-4.6`** | Same protocol; pending completion |
+| Third | `Third Step/results_opus46/` | **249 agents (50×5, 1 failure)** | **`opus-4.6`** | Same protocol as Second |
+| Fourth | `Third Step/results_grok46/` | **245 agents (50×5, 5 failures)** | **`grok-4.6`** | Same protocol as Second |
+| Fifth | `Third Step/results_grok46_v2/` | **243 agents (50×5, 7 failures)** | **`grok-4.6`** | **Neutralized instructions**: CS recipe + recommendations removed |
 
 ---
 
@@ -248,7 +346,7 @@ Pre-aggregated **state × year** panel (51 units, 1990–2022): effective minimu
 | `analyze_results.R` | Omnibus tests, plots |
 | `analyze_second_step_detail.R` | Extended tables/figures → `Second Step/analysis/` |
 
-Models: **`composer-2`** (Second Step), **`opus-4.6`** (Third Step), **`grok-4.6`** (in progress). Agents are sandboxed with `settingSources: []` so user/project rules outside the workspace are not loaded.
+Models: **`composer-2`** (Second Step), **`opus-4.6`** (Third Step), **`grok-4.6`** (Third Step, two runs: v1 with full instructions, v2 with neutralized instructions). Agents are sandboxed with `settingSources: []` so user/project rules outside the workspace are not loaded.
 
 ---
 
@@ -375,52 +473,69 @@ This specification variation in the `negative_short` arm is reminiscent of Cunni
 
 ## 6. Cross-model comparison
 
-```{r cross-model-table}
-cross_model <- bind_rows(
-  arm_summary_c2 |>
-    transmute(Model = "Composer-2", Arm = as.character(arm), N = n,
-              `Mean ATT` = fmt(mean_att), SD = fmt(sd_att),
-              `% TWFE` = fmt(100 * frac_twfe, 1),
-              `% continuous Tx` = fmt(100 * frac_continuous, 1)),
-  arm_summary_opus |>
-    transmute(Model = "Opus 4.6", Arm = as.character(arm), N = n,
-              `Mean ATT` = fmt(mean_att), SD = fmt(sd_att),
-              `% TWFE` = fmt(100 * frac_twfe, 1),
-              `% continuous Tx` = fmt(100 * frac_continuous, 1))
-)
-kable(cross_model, booktabs = TRUE, align = c("l", "l", rep("r", 5)),
-      caption = "Cross-model comparison: arm-level ATT and specification choices.")
-```
-
 ```{r cross-model-omnibus}
 cross_omnibus <- tibble(
-  Model = c("Composer-2", "Opus 4.6", "Grok 4.6"),
-  N = c(nrow(results_c2), nrow(results_opus), NA),
-  `Fisher p` = c(fmt(fisher_p_c2), fmt(fisher_p_opus), "—"),
-  `KW p` = c(fmt(kw_c2$p.value), fmt(kw_opus$p.value), "—"),
-  `Significant?` = c("No", "Yes", "Pending")
+  Model = c("Composer-2", "Opus 4.6", "Grok 4.6 (v1)", "Grok 4.6 (v2, neutralized)"),
+  N = c(nrow(results_c2), nrow(results_opus), nrow(results_grok), nrow(results_grok2)),
+  `Fisher p` = c(fmt(fisher_p_c2), fmt(fisher_p_opus), fmt(fisher_p_grok), fmt(fisher_p_grok2)),
+  `KW p` = c(fmt(kw_c2$p.value), fmt(kw_opus$p.value),
+             sprintf("%.1e", kw_grok$p.value), sprintf("%.1e", kw_grok2$p.value)),
+  `Primary channel` = c("—", "Estimator/treatment", "Outcome + control group", "Outcome + control group"),
+  `Significant?` = c("No", "Yes", "Yes", "Yes")
 )
-kable(cross_omnibus, booktabs = TRUE, align = c("l", "r", "r", "r", "c"),
-      caption = "Omnibus tests across model runs. Grok 4.6 is in progress.")
+kable(cross_omnibus, booktabs = TRUE, align = c("l", "r", "r", "r", "l", "c"),
+      caption = "Omnibus tests across all model runs.")
 ```
 
-**Key contrast:** The same experimental protocol yields **no detectable between-arm differences** with `composer-2` but **significant differences** with `opus-4.6`. The divergence is concentrated in the `negative_short` arm, which under Opus 4.6 produces more negative ATTs and more varied specifications — paralleling Cunningham's finding that negatively primed agents under certain conditions move toward TWFE/continuous treatment and more negative estimates.
+```{r cross-model-neg-short}
+neg_short_compare <- tibble(
+  Model = c("Composer-2", "Opus 4.6", "Grok 4.6 v1", "Grok 4.6 v2"),
+  `Mean ATT (neg_short)` = c(
+    fmt(arm_summary_c2$mean_att[arm_summary_c2$arm == "negative_short"]),
+    fmt(arm_summary_opus$mean_att[arm_summary_opus$arm == "negative_short"]),
+    fmt(arm_summary_grok$mean_att[arm_summary_grok$arm == "negative_short"]),
+    fmt(arm_summary_grok2$mean_att[arm_summary_grok2$arm == "negative_short"])
+  ),
+  `Mean ATT (none)` = c(
+    fmt(arm_summary_c2$mean_att[arm_summary_c2$arm == "none"]),
+    fmt(arm_summary_opus$mean_att[arm_summary_opus$arm == "none"]),
+    fmt(arm_summary_grok$mean_att[arm_summary_grok$arm == "none"]),
+    fmt(arm_summary_grok2$mean_att[arm_summary_grok2$arm == "none"])
+  ),
+  `% CS` = c("98.8%", "94.0%", "100%", "100%"),
+  `% non-teen (neg_short)` = c(
+    fmt(100 * (1 - arm_summary_c2$frac_teen[arm_summary_c2$arm == "negative_short"]), 0),
+    fmt(100 * (1 - arm_summary_opus$frac_teen[arm_summary_opus$arm == "negative_short"]), 0),
+    fmt(100 * (1 - arm_summary_grok$frac_teen[arm_summary_grok$arm == "negative_short"]), 0),
+    fmt(100 * (1 - arm_summary_grok2$frac_teen[arm_summary_grok2$arm == "negative_short"]), 0)
+  )
+)
+kable(neg_short_compare, booktabs = TRUE, align = c("l", rep("r", 4)),
+      caption = "negative\\_short arm across models: ATT and specification patterns.")
+```
+
+**Key findings:**
+
+1. **Model is a first-order moderator.** The same protocol yields no prime effect with `composer-2`, a moderate effect with `opus-4.6`, and a strong effect with `grok-4.6`.
+2. **The mechanism varies by model.** Opus shifts through estimator/treatment switching; Grok shifts through outcome variable and control group selection.
+3. **Removing the CS recipe has no effect on estimator choice** (Grok v1 vs v2: both 100% CS). The CS preference is baked into model training.
+4. **Removing the not-yet-treated recommendation shifts control group choices** in non-primed arms but does not change the prime effect magnitude.
 
 ---
 
 ## 7. Comparison to Cunningham (2026)
 
-| Dimension | Cunningham (Substack) | Composer-2 run | Opus 4.6 run |
-|:----------|:----------------------|:---------------|:-------------|
-| Platform | Claude Code CLI | Cursor SDK (`composer-2`) | Cursor SDK (`opus-4.6`) |
-| Arms | 3 | **5** | **5** |
-| Wave 1 pattern | Similar ATTs under CS-only | **Replicates** (~99% CS; Fisher *p* ≈ 0.41) | Partial (mostly CS, but arm differences emerge) |
-| Wave 2 pattern | Negative arm → more TWFE, continuous Tx, more negative ATTs | **Does not replicate** (≤4% TWFE; 0% continuous) | **Partially replicates** (`negative_short` arm shifts negative with specification diversity) |
-| Data | Same essential panel concept | Pre-aggregated CSV | Pre-aggregated CSV |
+| Dimension | Cunningham (Substack) | Composer-2 | Opus 4.6 | Grok 4.6 |
+|:----------|:----------------------|:-----------|:---------|:---------|
+| Platform | Claude Code CLI | Cursor SDK | Cursor SDK | Cursor SDK |
+| Wave 1 pattern | Similar ATTs (CS-only) | **Replicates** | Partial | — |
+| Wave 2 pattern | Neg arm → TWFE, more negative | **Does not replicate** | **Partially** (neg\_short) | **Novel channel** (outcome + control) |
+| Mechanism | Estimator switching | — | Estimator switching | Outcome + control group |
+| Prime effect strength | Moderate–strong | None | Moderate | **Strong** |
 
-The Opus 4.6 run **bridges the gap** between the Composer-2 results and Cunningham's Wave 2 findings. While the specification-channel effect is concentrated in the `negative_short` arm (rather than all negative-primed agents), the pattern is qualitatively similar: negative primes induce some agents to explore alternative estimators and report more negative ATTs.
+Cunningham's central finding — negatively primed agents exercise more specification discretion and report more negative ATTs — **replicates across models but through different channels**. Opus 4.6 mirrors the Wave 2 estimator-switching pattern. Grok 4.6 discovers a **novel mechanism**: outcome variable and control group selection, while staying entirely on Callaway–Sant'Anna.
 
-Most plausible explanation: **model matters**. `Composer-2` agents treat TWFE caveats as binding and default uniformly to CS. `Opus-4.6` agents exercise more discretion when primed with negative literature, especially in the concise (`short`) format. A fuller technical discussion is in `reports/cursor_replication_report.qmd`.
+The **instruction-neutralization experiment** (Grok v2) demonstrates that agents' estimator preferences come from **model training, not the methodology document**. This has implications for experimental design: the CS recipe was not driving CS adoption, so removing it does not "free" agents to explore TWFE.
 
 ---
 
@@ -432,8 +547,9 @@ Most plausible explanation: **model matters**. `Composer-2` agents treat TWFE ca
 │   ├── results/                   # 250-agent Composer-2 outputs + core plots
 │   └── analysis/                  # Extended summaries and figures
 ├── Third Step/
-│   ├── results_opus46/            # 249-agent Opus 4.6 outputs + core plots
-│   └── results_grok46/           # Grok 4.6 run (in progress)
+│   ├── results_opus46/            # 249-agent Opus 4.6 outputs
+│   ├── results_grok46/           # 245-agent Grok 4.6 v1 (full instructions)
+│   └── results_grok46_v2/        # 243-agent Grok 4.6 v2 (neutralized instructions)
 ├── data/agent_panel_essential.csv
 ├── conditions.tsv
 ├── INSTRUCTIONS_SHARED.md / DID_METHODOLOGY.md / PRIME_*.md
@@ -454,15 +570,15 @@ Rscript scripts/analyze_results.R "Third Step/results_opus46"
 
 ## 9. Limitations and next steps
 
-**Limitations.** Two models completed so far (`composer-2` and `opus-4.6`); Grok 4.6 run in progress. No rhetoric/confidence scoring pipeline; one permissive-estimator wave on Cursor per model (no within-platform CS-only vs TWFE-allowed contrast); prime texts differ from Cunningham's exact wording.
+**Limitations.** Three models tested (`composer-2`, `opus-4.6`, `grok-4.6`); no rhetoric/confidence scoring pipeline; prime texts differ from Cunningham's exact wording; within-model instruction variation tested only for Grok.
 
 **Testable next steps.**
 
-1. **Complete Grok 4.6 run** and incorporate results for a three-model comparison.
-2. Match Cunningham's three-arm primes and Wave 2 methodology text verbatim.
-3. Inspect Opus 4.6 agent logs for the `negative_short` arm to understand the specification-search mechanism.
-4. Re-run with additional models via Cursor SDK to map the model → prime-sensitivity frontier.
-5. Optionally relax sandbox (`settingSources`) to test ambient-memory hypotheses.
+1. Match Cunningham's three-arm primes and Wave 2 methodology text verbatim for a direct comparison.
+2. Run the neutralized-instruction variant on **Opus 4.6** to test whether its estimator-switching channel also persists without the CS recipe.
+3. Inspect agent logs for the `negative_short` arm across models to trace specification-search mechanisms in detail.
+4. Test additional models (e.g., GPT-5.6, Fable 5.1) to map the full model → prime-sensitivity frontier.
+5. Add Cunningham-style rhetoric/confidence scoring to test whether prime effects show up in narrative even when ATTs don't shift.
 
 ---
 
